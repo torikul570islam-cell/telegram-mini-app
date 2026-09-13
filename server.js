@@ -12,6 +12,11 @@ app.set('trust proxy', 1);
 app.use(express.json());
 app.use(cors());
 
+// ব্রাউজারে রেন্ডার লিংকে ঢুকলে যেন Cannot GET না দেখায়
+app.get('/', (req, res) => {
+  res.send('🚀 Telegram Mini App Backend Server is Running Successfully!');
+});
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const ADMIN_ID = process.env.ADMIN_ID; 
