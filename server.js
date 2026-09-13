@@ -11,6 +11,9 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
+// ফ্রন্টএন্ড স্ট্যাটিক ফাইল সার্ভ করার জন্য (মিনি অ্যাপ ইন্টারফেস দেখানোর জন্য)
+app.use(express.static('public'));
+
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
 const MONGO_URI = process.env.MONGO_URI || '';
 const ADMIN_ID = process.env.ADMIN_ID || ''; 
@@ -101,11 +104,6 @@ function verifyTelegramAuth(req, res, next) {
     return res.status(401).json({ error: "Authentication failed!" });
   }
 }
-
-// হোম পেজ রুট (Cannot GET / সমস্যা সমাধানের জন্য)
-app.get('/', (req, res) => {
-  res.send('🚀 SUB for SUB Mini App Backend is Running Successfully!');
-});
 
 app.get('/api/config', (req, res) => {
   res.json({
