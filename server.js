@@ -49,14 +49,15 @@ const TaskSchema = new mongoose.Schema({
   creatorTelegramId: { type: String, index: true },
   platformType: String,
   socialLink: String,
-  rewardPerTask: { type: Number, min: 1 },
+  rewardPerTask: { type: Number, min: 10 }, // মিনিমাম ১০ ক্রেডিট করা হলো
   status: { type: String, default: 'Active' },
   completedCount: { type: Number, default: 0 },
   completedUsers: { type: Array, default: [] }
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+// পোলিং কনফ্লিক্ট এড়ানোর জন্য পোলিং বন্ধ রাখা হয়েছে (Webapp ও ইনভয়েস API ঠিকমতো কাজ করবে)
+const bot = new TelegramBot(BOT_TOKEN);
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -128,7 +129,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ৬. প্রমোশন ক্রিয়েট (মিনিমাম কোয়ান্টিটি/মাল্টিপ্লায়ার ১০ করা হয়েছে)
+// ৬. প্রমোশন ক্রিয়েট (মিনিমাম রিওয়ার্ড/টাস্ক ১০ নিশ্চিত করা হয়েছে)
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -138,11 +139,11 @@ app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
 
     const reward = Number(rewardPerTask);
-    if (isNaN(reward) || reward <= 0) {
-      return res.status(400).json({ success: false, message: "Reward per task must be greater than 0!" });
+    if (isNaN(reward) || reward < 10) {
+      return res.status(400).json({ success: false, message: "Minimum reward per task must be at least 10 credits!" });
     }
 
-    const totalCost = reward * 10; // ন্যূনতম ১০ বা গেটওয়ে মাল্টিপ্লায়ার ১০
+    const totalCost = reward * 10; // ন্যূনতম ১০ গুণ মাল্টিপ্লায়ার বাজেট
     if (user.balance < totalCost) {
       return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion! (Min 10 tasks budget required)" });
     }
@@ -416,7 +417,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ১৩. ফ্রন্টএন্ড UI (আপডেটেড ব্যালেন্স, ডেইলি বোনাস ১০ এবং মিনিমাম টাস্ক ১০)
+// ১৩. ফ্রন্টএন্ড UI (মিনিমাম টাস্ক reward ১০ এবং সম্পূর্ণ ইউজার ইন্টারফেস)
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -504,8 +505,8 @@ app.get('/', (req, res) => {
                 </select>
                 <label>Social Link / URL:</label>
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
-                <label>Credits Per Task Reward (Min 1):</label>
-                <input type="number" id="rewardPerTask" min="1" placeholder="e.g. 5">
+                <label>Credits Per Task Reward (Min 10):</label>
+                <input type="number" id="rewardPerTask" min="10" placeholder="e.g. 10">
                 <p style="font-size:11px; color:#94a3b8;">Note: 10x reward credits will be deducted instantly as minimum budget for 10 engagements.</p>
                 <button class="action-btn" onclick="createTask()">Add Link & Start Promotion</button>
             </div>
@@ -626,8 +627,8 @@ app.get('/', (req, res) => {
                 const socialLink = document.getElementById('socialLink').value;
                 const rewardPerTask = document.getElementById('rewardPerTask').value;
 
-                if(!socialLink || !rewardPerTask || Number(rewardPerTask) <= 0) {
-                    alert("Please fill all fields with valid numbers!");
+                if(!socialLink || !rewardPerTask || Number(rewardPerTask) < 10) {
+                    alert("Please fill all fields! Minimum reward per task must be at least 10 credits.");
                     return;
                 }
 
@@ -742,7 +743,7 @@ app.get('/', (req, res) => {
             }
 
             async function requestWithdraw() {
-                const paymentMethod = document.getElementById('paymentMethod500').value || document.getElementById('paymentMethod').value;
+                const paymentMethod = document.getElementById('paymentMethod').value;
                 const accountNo = document.getElementById('accountNo').value;
                 const starAmount = document.getElementById('starAmount').value;
 
