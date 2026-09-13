@@ -12,7 +12,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ফ্রন্টএন্ড ফাইল যদি public ফোল্ডারে থাকে
+// ফ্রন্টএন্ড ফাইল সার্ভ করার জন্য (মিনি অ্যাপ ইন্টারফেস দেখানোর জন্য)
 app.use(express.static('public'));
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -58,6 +58,7 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
+// Safe Bot Initialization to prevent deploy crash
 let bot = null;
 if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -105,9 +106,9 @@ function verifyTelegramAuth(req, res, next) {
   }
 }
 
-// হোম পেজ রুট: যদি index.html ফাইলটি মূল ফোল্ডারে থাকে তবে সরাসরি ওপেন হবে
+// হোম পেজ বা রুট হ্যান্ডলার (Cannot GET / সমস্যা সমাধানের জন্য)
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 app.get('/api/config', (req, res) => {
