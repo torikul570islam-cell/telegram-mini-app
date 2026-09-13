@@ -102,6 +102,11 @@ function verifyTelegramAuth(req, res, next) {
   }
 }
 
+// হোম পেজ রুট (Cannot GET / সমস্যা সমাধানের জন্য)
+app.get('/', (req, res) => {
+  res.send('🚀 SUB for SUB Mini App Backend is Running Successfully!');
+});
+
 app.get('/api/config', (req, res) => {
   res.json({
     adminId: ADMIN_ID,
@@ -217,7 +222,6 @@ app.post('/api/toggle-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// GET TASKS: filters out completed, skipped, or creator's own tasks and limits to max 2
 app.get('/api/tasks', async (req, res) => {
   try {
     const { platform, telegramId } = req.query;
@@ -251,7 +255,6 @@ app.get('/api/tasks', async (req, res) => {
   }
 });
 
-// SKIP TASK: adds to skipped tasks so it never appears again for this user
 app.post('/api/skip-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, taskId } = req.body;
@@ -268,7 +271,6 @@ app.post('/api/skip-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// COMPLETE TASK: ensures task is processed once and pushed to completed list
 app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -372,7 +374,6 @@ app.post('/api/daily-bonus', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// Secured Admin Reward Route
 app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
   try {
     const requesterId = String(req.telegramUser?.id);
