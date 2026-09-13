@@ -9,7 +9,7 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ১. MongoDB কানেকশন ও স্কিমা
+// ১. MongoDB কানেকশন
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -17,13 +17,15 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(() => console.log('✅ MongoDB Connected Successfully'))
 .catch((err) => console.error('❌ MongoDB Connection Error:', err));
 
+// ২. ডাটাবেজ স্কিমা (User, Task, Daily Bonus ট্র্যাক)
 const UserSchema = new mongoose.Schema({
   telegramId: { type: String, required: true, unique: true },
   username: String,
-  balance: { type: Number, default: 0 },         // ক্রেডিট ব্যালেন্স
-  starBalance: { type: Number, default: 0 },     // স্টার ব্যালেন্স (মিনিমাম ৫০০ হলে বিকাশ/নগদে উইথড্র)
+  balance: { type: Number, default: 100 },         // সাইনআপ বোনাস ১০০ ক্রেডিট ফ্রি
+  starBalance: { type: Number, default: 0 },     
   referredBy: { type: String, default: null },
-  completedTasks: { type: Array, default: [] }
+  completedTasks: { type: Array, default: [] },
+  lastDailyBonus: { type: Date, default: null }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -32,16 +34,16 @@ const TaskSchema = new mongoose.Schema({
   platformType: String,
   socialLink: String,
   rewardPerTask: Number,
+  status: { type: String, default: 'Active' }, // Active / Paused
   completedCount: { type: Number, default: 0 },
   completedUsers: { type: Array, default: [] }
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// ২. টেলিগ্রাম বট ইনিশিয়ালাইজ
+// টেলিগ্রাম বট ও জিমেইল ইনিশিয়ালাইজ
 const token = process.env.BOT_TOKEN;
 const bot = new TelegramBot(token, { polling: true });
 
-// ৩. Nodemailer জিমেইল ট্রান্সপোর্টার সেটআপ
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
@@ -50,15 +52,24 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// ৪. ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডলিং এপিআই
+// ৩. ইউজার রেজিস্ট্রেশন ও রেফারেল কমিশন হ্যান্ডলিং
 app.post('/api/user', async (req, res) => {
   try {
     const { telegramId, username, referralId } = req.body;
     let user = await User.findOne({ telegramId });
     
     if (!user) {
-      user = new User({ telegramId, username, balance: 0, starBalance: 0, referredBy: referralId || null });
+      user = new User({ telegramId, username, balance: 100, referredBy: referralId || null });
       await user.save();
+
+      // যদি রেফারেল থাকে তবে ইনভাইটকারীকে ৫০ ক্রেডিট বোনাস দেওয়া
+      if (referralId && referralId !== telegramId) {
+        let referrer = await User.findOne({ telegramId: referralId });
+        if (referrer) {
+          referrer.balance += 50;
+          await referrer.save();
+        }
+      }
     }
     res.json(user);
   } catch (err) {
@@ -66,38 +77,71 @@ app.post('/api/user', async (req, res) => {
   }
 });
 
-// ৫. নতুন টাস্ক বা সোশ্যাল লিংক ক্রিয়েট করার এপিআই
+// ৪. নতুন টাস্ক বা প্রমোশন পেজ ক্রিয়েট করার এপিআই
 app.post('/api/create-task', async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
     let user = await User.findOne({ telegramId });
     if (!user) return res.status(404).json({ error: "User not found" });
 
+    const totalCost = Number(rewardPerTask) * 10; // ন্যূনতম ১০টি এনগেজমেন্টের খরচ কেটে নেওয়া বা ব্যালেন্স চেক
+    if (user.balance < totalCost) {
+      return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion!" });
+    }
+
+    user.balance -= totalCost;
+    await user.save();
+
     const newTask = new Task({
       creatorTelegramId: telegramId,
       platformType,
       socialLink,
       rewardPerTask: Number(rewardPerTask),
+      status: 'Active',
       completedCount: 0
     });
     await newTask.save();
-    res.json({ success: true, message: "Task posted successfully!" });
+    res.json({ success: true, message: "Promotion added successfully!", balance: user.balance });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ৬. সমস্ত এভেলেবল টাস্ক দেখার এপিআই
-app.get('/api/tasks', async (req, res) => {
+// ৫. ইউজারের নিজের পেজ বা টাস্কগুলো ম্যানেজ (Pause/Delete) করার এপিআই
+app.get('/api/my-tasks/:telegramId', async (req, res) => {
   try {
-    const tasks = await Task.find();
+    const tasks = await Task.find({ creatorTelegramId: req.params.telegramId });
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ৭. টাস্ক কমপ্লিট করে আর্নিং যোগ করার এপিআই
+app.post('/api/toggle-task', async (req, res) => {
+  try {
+    const { taskId } = req.body;
+    let task = await Task.findById(taskId);
+    if (!task) return res.status(404).json({ error: "Task not found" });
+
+    task.status = task.status === 'Active' ? 'Paused' : 'Active';
+    await task.save();
+    res.json({ success: true, status: task.status });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ৬. সমস্ত একটিভ টাস্ক দেখার এপিআই
+app.get('/api/tasks', async (req, res) => {
+  try {
+    const tasks = await Task.find({ status: 'Active' });
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ৭. টাস্ক কমপ্লিট করে আর্নিং যোগ করা
 app.post('/api/complete-task', async (req, res) => {
   try {
     const { telegramId, taskId } = req.body;
@@ -123,7 +167,33 @@ app.post('/api/complete-task', async (req, res) => {
   }
 });
 
-// ৮. বিকাশ/নগদ উইথড্র রিকোয়েস্ট
+// ৮. ডেইলি বোনাস ক্লেম এপিআই (প্রতি ২৪ ঘণ্টায় একবার ১০০ ক্রেডিট ফ্রি)
+app.post('/api/daily-bonus', async (req, res) => {
+  try {
+    const { telegramId } = req.body;
+    let user = await User.findOne({ telegramId });
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const now = new Date();
+    if (user.lastDailyBonus) {
+      const diffTime = Math.abs(now - new Date(user.lastDailyBonus));
+      const diffHours = diffTime / (1000 * 60 * 60);
+      if (diffHours < 24) {
+        return res.status(400).json({ success: false, message: "You can claim daily bonus only once every 24 hours!" });
+      }
+    }
+
+    user.balance += 100;
+    user.lastDailyBonus = now;
+    await user.save();
+
+    res.json({ success: true, message: "Successfully claimed 100 Daily Bonus credits!", balance: user.balance });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ৯. বিকাশ/নগদ উইথড্র রিকোয়েস্ট
 app.post('/api/withdraw', async (req, res) => {
   const { telegramId, username, starAmount, paymentMethod, accountNo } = req.body;
 
@@ -144,18 +214,17 @@ app.post('/api/withdraw', async (req, res) => {
       from: process.env.EMAIL_USER,
       to: process.env.ADMIN_EMAIL,
       subject: `🚨 New Withdraw Request (${paymentMethod}) from @${username || 'User'}`,
-      text: `User ID: ${telegramId}\nUsername: @${username}\nStars to Pay: ${starAmount}\nMethod: ${paymentMethod}\nAccount No: ${accountNo}\n\nদয়া করে ম্যানুয়ালি টাকা পাঠিয়ে দিন।`,
+      text: `User ID: ${telegramId}\nUsername: @${username}\nStars to Pay: ${starAmount}\nMethod: ${paymentMethod}\nAccount No: ${accountNo}`,
     };
 
     await transporter.sendMail(mailOptions);
     res.status(200).json({ success: true, message: "Withdraw request submitted successfully!", starBalance: user.starBalance });
   } catch (error) {
-    console.error("Withdraw Error:", error);
     res.status(500).json({ success: false, error: "Failed to process withdraw request." });
   }
 });
 
-// ৯. টেলিগ্রাম স্টারস (XTR) পেমেন্ট ইনভয়েস
+// ১০. টেলিগ্রাম স্টারস পেমেন্ট ইনভয়েস
 app.post('/api/send-invoice', async (req, res) => {
   const { chatId, amount, telegramId } = req.body;
   try {
@@ -186,12 +255,17 @@ bot.on('pre_checkout_query', async (query) => {
 bot.on('message', async (msg) => {
   if (msg.successful_payment) {
     const chatId = msg.chat.id;
-    const totalStars = msg.successful_payment.total_amount; 
-    await bot.sendMessage(chatId, `🎉 Payment of ${totalStars} Stars successful! Account updated.`);
+    const totalStars = msg.successful_payment.total_amount;
+    let user = await User.findOne({ telegramId: String(chatId) });
+    if (user) {
+      user.starBalance += totalStars;
+      await user.save();
+    }
+    await bot.sendMessage(chatId, `🎉 Payment of ${totalStars} Stars successful! Star balance updated.`);
   }
 });
 
-// ১০. Like4Like স্টাইল 3-Dot মেনু এবং ফুল ফ্রন্টএন্ড UI
+// ১১. ফুল ফিচারড ফ্রন্টএন্ড UI (Like4Like স্টাইল কমপ্লিট ড্যাশবোর্ড)
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -199,18 +273,15 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Social Exchange Mini App</title>
+        <title>Like4Like Telegram Mini App</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #fff; margin: 0; padding: 15px; text-align: center; }
             .header { background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center; }
             .header-info { text-align: left; }
-            .balance { font-size: 16px; font-weight: bold; color: #38bdf8; }
-            
-            /* 3-Dot Menu Button */
+            .balance { font-size: 15px; font-weight: bold; color: #38bdf8; }
             .menu-btn { background: #334155; color: #fff; border: none; font-size: 20px; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
             
-            /* Sliding Side Menu (Like4Like Style) */
             .side-menu { position: fixed; top: 0; right: -280px; width: 260px; height: 100%; background: #1e293b; box-shadow: -5px 0 15px rgba(0,0,0,0.5); z-index: 1000; transition: 0.3s ease; text-align: left; padding: 20px; box-sizing: border-box; }
             .side-menu.open { right: 0; }
             .menu-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-bottom: 15px; }
@@ -227,40 +298,38 @@ app.get('/', (req, res) => {
         </style>
     </head>
     <body>
-        <!-- Header with Credits & 3-Dot Menu -->
         <div class="header">
             <div class="header-info">
-                <h3 style="margin:0 0 5px 0; font-size:16px;">🔥 Social Exchange</h3>
-                <span class="balance">🪙 <span id="userBalance">0</span> Credits</span> | <span style="color:#22c55e;">⭐ <span id="userStarBalance">0</span> Stars</span>
+                <h3 style="margin:0 0 4px 0; font-size:15px;">🔥 Social Exchange</h3>
+                <span class="balance">🪙 <span id="userBalance">0</span> Crd</span> | <span style="color:#22c55e; font-size:14px;">⭐ <span id="userStarBalance">0</span> Str</span>
             </div>
             <button class="menu-btn" onclick="toggleMenu()">⋮</button>
         </div>
 
-        <!-- Sliding 3-Dot Menu Options (Like4Like Style) -->
         <div id="sideMenu" class="side-menu">
             <div class="menu-header">
-                <h4 style="margin:0; color:#38bdf8;">Menu Options</h4>
+                <h4 style="margin:0; color:#38bdf8;">Main Menu</h4>
                 <button class="close-menu" onclick="toggleMenu()">✕</button>
             </div>
             <button class="menu-item" onclick="switchTab('earn'); toggleMenu()">🎁 Free Credits / Earn</button>
-            <button class="menu-item" onclick="switchTab('post'); toggleMenu()">➕ Add / Manage Pages</button>
-            <button class="menu-item" onclick="switchTab('buy'); toggleMenu()">🛒 Buy Credits (Telegram Stars)</button>
+            <button class="menu-item" onclick="switchTab('post'); toggleMenu()">➕ Add New Promotion</button>
+            <button class="menu-item" onclick="switchTab('manage'); toggleMenu(); loadMyTasks();">⚙️ Add/Manage Pages</button>
+            <button class="menu-item" onclick="switchTab('bonus'); toggleMenu()">🏆 Daily Bonuses</button>
+            <button class="menu-item" onclick="switchTab('buy'); toggleMenu()">🛒 Buy Credits (Stars)</button>
             <button class="menu-item" onclick="switchTab('profile'); toggleMenu()">👤 Profile & Withdraw</button>
-            <button class="menu-item" onclick="alert('Weekly Bonuses coming soon!')">🏆 Weekly Bonuses</button>
-            <button class="menu-item" onclick="alert('Special Offers activated!')">📢 Special Offers</button>
         </div>
 
-        <!-- 1. EARN / FREE CREDITS TAB -->
+        <!-- 1. FREE CREDITS / EARN -->
         <div id="earnTab" class="tab-content active">
-            <h3 class="section-title" style="margin-top:0;">🎯 Free Credits (Available Tasks)</h3>
+            <h3 class="section-title" style="margin-top:0;">🎯 Free Credits (Tasks)</h3>
             <div id="taskList">Loading tasks...</div>
         </div>
 
-        <!-- 2. ADD/MANAGE PAGES TAB -->
+        <!-- 2. ADD PROMOTION -->
         <div id="postTab" class="tab-content">
             <div class="card">
-                <h3 class="section-title" style="margin-top:0;">➕ Add Social Link & Promotion</h3>
-                <label>Select Platform:</label>
+                <h3 class="section-title" style="margin-top:0;">➕ Add Social Link</h3>
+                <label>Platform Type:</label>
                 <select id="platformType">
                     <option value="Facebook Likes">Facebook Likes</option>
                     <option value="Facebook Follow">Facebook Follow</option>
@@ -271,17 +340,32 @@ app.get('/', (req, res) => {
                 </select>
                 <label>Social Link / URL:</label>
                 <input type="text" id="socialLink" placeholder="https://facebook.com/your-page">
-                <label>Credits Per Task (Reward):</label>
+                <label>Credits Per Task Reward:</label>
                 <input type="number" id="rewardPerTask" placeholder="e.g. 5">
+                <p style="font-size:11px; color:#94a3b8;">Note: 10x reward credits will be deducted instantly as campaign budget.</p>
                 <button class="action-btn" onclick="createTask()">Add Link & Start Promotion</button>
             </div>
         </div>
 
-        <!-- 3. BUY CREDITS TAB -->
+        <!-- 3. ADD/MANAGE PAGES -->
+        <div id="manageTab" class="tab-content">
+            <h3 class="section-title" style="margin-top:0;">⚙️ Manage Your Pages</h3>
+            <div id="myTaskList">Loading your pages...</div>
+        </div>
+
+        <!-- 4. DAILY BONUSES -->
+        <div id="bonusTab" class="tab-content">
+            <div class="card" style="text-align: center;">
+                <h3 class="section-title" style="margin-top:0; text-align: center;">🏆 Daily Free Bonus</h3>
+                <p style="font-size: 13px; color: #94a3b8;">Claim your free 100 credits every 24 hours!</p>
+                <button class="action-btn" style="background:#22c55e; color:#fff;" onclick="claimDailyBonus()">Claim Daily Bonus (+100 Crd)</button>
+            </div>
+        </div>
+
+        <!-- 5. BUY CREDITS -->
         <div id="buyTab" class="tab-content">
             <div class="card">
-                <h3 class="section-title" style="margin-top:0;">🛒 Buy Credits with Telegram Stars</h3>
-                <p style="font-size: 13px; color: #94a3b8;">Instantly boost your balance using official Telegram Stars (XTR).</p>
+                <h3 class="section-title" style="margin-top:0;">🛒 Buy Credits with Stars</h3>
                 <label>Select Package:</label>
                 <select id="starPackage">
                     <option value="50">50 Stars - 500 Credits</option>
@@ -292,21 +376,21 @@ app.get('/', (req, res) => {
             </div>
         </div>
 
-        <!-- 4. PROFILE & WITHDRAW TAB -->
+        <!-- 6. PROFILE & WITHDRAW -->
         <div id="profileTab" class="tab-content">
             <div class="card">
-                <h3 class="section-title" style="margin-top:0;">👤 My Profile</h3>
+                <h3 class="section-title" style="margin-top:0;">👤 My Profile & Referrals</h3>
                 <p><strong>Username:</strong> <span id="pUsername">-</span></p>
                 <p><strong>User ID:</strong> <span id="pId">-</span></p>
                 <p><strong>Credit Balance:</strong> <span id="pBalance" style="color:#38bdf8; font-weight:bold;">0</span></p>
-                <p><strong>Star Balance:</strong> <span id="pStarBalance" style="color:#22c55e; font-weight:bold;">0</span> Stars (Min 500)</p>
-                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">Referral Link:</p>
+                <p><strong>Star Balance:</strong> <span id="pStarBalance" style="color:#22c55e; font-weight:bold;">0</span> Stars</p>
+                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">Referral Link (Earn 50 Crd per join):</p>
                 <input type="text" id="refLink" readonly style="font-size: 11px; background: #111;">
             </div>
 
             <div class="card">
                 <h3 class="section-title" style="margin-top:0;">💳 Withdraw via Bkash/Nagad</h3>
-                <label>Select Method:</label>
+                <label>Method:</label>
                 <select id="paymentMethod">
                     <option value="Bkash">Bkash</option>
                     <option value="Nagad">Nagad</option>
@@ -334,16 +418,7 @@ app.get('/', (req, res) => {
 
             function switchTab(tabName) {
                 document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-                
-                if(tabName === 'earn') {
-                    document.getElementById('earnTab').classList.add('active');
-                } else if(tabName === 'post') {
-                    document.getElementById('postTab').classList.add('active');
-                } else if(tabName === 'buy') {
-                    document.getElementById('buyTab').classList.add('active');
-                } else if(tabName === 'profile') {
-                    document.getElementById('profileTab').classList.add('active');
-                }
+                document.getElementById(tabName + 'Tab').classList.add('active');
             }
 
             async function initApp() {
@@ -352,14 +427,14 @@ app.get('/', (req, res) => {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ telegramId: String(user.id), username: user.username, referralId })
                 });
-                const currentUserData = await res.json();
+                const data = await res.json();
                 
-                document.getElementById('userBalance').innerText = currentUserData.balance;
-                document.getElementById('userStarBalance').innerText = currentUserData.starBalance;
+                document.getElementById('userBalance').innerText = data.balance;
+                document.getElementById('userStarBalance').innerText = data.starBalance;
                 document.getElementById('pUsername').innerText = '@' + (user.username || 'user');
                 document.getElementById('pId').innerText = user.id;
-                document.getElementById('pBalance').innerText = currentUserData.balance;
-                document.getElementById('pStarBalance').innerText = currentUserData.starBalance;
+                document.getElementById('pBalance').innerText = data.balance;
+                document.getElementById('pStarBalance').innerText = data.starBalance;
                 
                 const botUsername = "YourBotUsername"; 
                 document.getElementById('refLink').value = \`https://t.me/\${botUsername}?start=\${user.id}\`;
@@ -387,10 +462,10 @@ app.get('/', (req, res) => {
                     alert("Promotion added successfully!");
                     document.getElementById('socialLink').value = '';
                     document.getElementById('rewardPerTask').value = '';
+                    initApp();
                     switchTab('earn');
-                    loadTasks();
                 } else {
-                    alert(data.error);
+                    alert(data.message || data.error);
                 }
             }
 
@@ -411,12 +486,44 @@ app.get('/', (req, res) => {
                             <span style="font-size: 11px; background: #334155; padding: 2px 6px; border-radius: 4px; color: #38bdf8;">\${task.platformType}</span>
                             <p style="margin: 8px 0;"><strong>Link:</strong> <a href="\${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">\${task.socialLink}</a></p>
                             <p><strong>Reward:</strong> +\${task.rewardPerTask} Credits</p>
-                            <p><strong>Completed:</strong> <span style="color: #22c55e; font-weight:bold;">\${task.completedCount}</span> times</p>
                             <button class="action-btn" onclick="completeTask('\${task._id}')">Complete Task & Earn</button>
                         </div>
                     \`;
                 });
                 taskListDiv.innerHTML = html;
+            }
+
+            async function loadMyTasks() {
+                const res = await fetch(\`/api/my-tasks/\${user.id}\`);
+                const tasks = await res.json();
+                const myTaskListDiv = document.getElementById('myTaskList');
+
+                if(tasks.length === 0) {
+                    myTaskListDiv.innerHTML = "<p style='color:#94a3b8;'>You haven't added any pages yet.</p>";
+                    return;
+                }
+
+                let html = '';
+                tasks.forEach(task => {
+                    html += \`
+                        <div class="card" style="border: 1px solid #334155;">
+                            <span style="font-size: 11px; background: #334155; padding: 2px 6px; border-radius: 4px; color: #38bdf8;">\${task.platformType}</span>
+                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">\${task.socialLink}</p>
+                            <p><strong>Status:</strong> <span style="color:\${task.status==='Active'?'#22c55e':'#ef4444'}">\${task.status}</span> | <strong>Done:</strong> \${task.completedCount} times</p>
+                            <button class="action-btn" style="background:\${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('\${task._id}')">\${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
+                        </div>
+                    \`;
+                });
+                myTaskListDiv.innerHTML = html;
+            }
+
+            async function toggleTask(taskId) {
+                await fetch('/api/toggle-task', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ taskId })
+                });
+                loadMyTasks();
             }
 
             async function completeTask(taskId) {
@@ -434,6 +541,17 @@ app.get('/', (req, res) => {
                 }
             }
 
+            async function claimDailyBonus() {
+                const res = await fetch('/api/daily-bonus', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ telegramId: String(user.id) })
+                });
+                const data = await res.json();
+                alert(data.message);
+                initApp();
+            }
+
             async function buyStarsInvoice() {
                 const amount = Number(document.getElementById('starPackage').value);
                 const res = await fetch('/api/send-invoice', {
@@ -443,9 +561,7 @@ app.get('/', (req, res) => {
                 });
                 const data = await res.json();
                 if(data.success) {
-                    alert("Invoice sent to your Telegram chat! Please check your bot chat.");
-                } else {
-                    alert("Failed to send invoice.");
+                    alert("Invoice sent to your Telegram chat!");
                 }
             }
 
@@ -465,12 +581,8 @@ app.get('/', (req, res) => {
                     body: JSON.stringify({ telegramId: String(user.id), username: user.username, starAmount, paymentMethod, accountNo })
                 });
                 const data = await res.json();
-                if(data.success) {
-                    alert("Withdraw request sent to Admin via Email!");
-                    initApp();
-                } else {
-                    alert(data.message);
-                }
+                alert(data.message);
+                initApp();
             }
 
             initApp();
