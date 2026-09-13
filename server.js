@@ -512,11 +512,11 @@ app.get('/', (req, res) => {
                     <option value="TikTok Follower">TikTok Follower</option>
                     <option value="TikTok Video Like">TikTok Video Like</option>
                     <option value="Twitter/X Follower">Twitter/X Follower</option>
-                    <option value="Website Visit">🌐 Website Visit / Traffic</option>
-                    <option value="App Download">📱 App Download & Review</option>
-                    <option value="Facebook Share">↗️ Facebook Post Share</option>
-                    <option value="Discord Join">💬 Discord Server Join</option>
-                    <option value="Custom Option Name">✨ Custom Option Name</option>
+                    <option value="Website Visit">Website Visit / Traffic</option>
+                    <option value="App Download">App Download & Review</option>
+                    <option value="Facebook Share">Facebook Post Share</option>
+                    <option value="Discord Join">Discord Server Join</option>
+                    <option value="More Option">More Option</option>
                 </select>
                 <label>Social Link / URL:</label>
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
