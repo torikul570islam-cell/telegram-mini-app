@@ -11,7 +11,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// --- কনফিগারেশনসমূহ (.env থেকে লোড হবে) ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const ADMIN_ID = process.env.ADMIN_ID; 
@@ -19,7 +18,6 @@ const BOT_USERNAME = process.env.BOT_USERNAME;
 const EMAIL_USER = process.env.EMAIL_USER; 
 const EMAIL_PASS = process.env.EMAIL_PASS; 
 
-// ১. রেট লিমিটার
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, 
   max: 100, 
@@ -27,12 +25,10 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/', apiLimiter);
 
-// ২. MongoDB কানেকশন
 mongoose.connect(MONGO_URI)
 .then(() => console.log('✅ MongoDB Connected Successfully'))
 .catch((err) => console.error('❌ MongoDB Connection Error:', err));
 
-// ৩. ডাটাবেজ স্কিমা
 const UserSchema = new mongoose.Schema({
   telegramId: { type: String, required: true, unique: true, index: true },
   username: String,
@@ -66,7 +62,6 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// ৪. টেলিগ্রাম ডাটা ভ্যালিডেশন মিডলওয়্যার
 function verifyTelegramAuth(req, res, next) {
   const initData = req.headers['x-telegram-init-data'];
   if (!initData) {
@@ -95,7 +90,6 @@ function verifyTelegramAuth(req, res, next) {
   }
 }
 
-// ৫. ইউজার রেজিস্ট্রেশন ও রেফারেল বোনাস (১০০ ক্রেডিট)
 app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, username, referralId } = req.body;
@@ -117,7 +111,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
       if (validReferral) {
         let referrer = await User.findOne({ telegramId: validReferral });
         if (referrer) {
-          referrer.balance += 100; // রেফার বোনাস ১০০ ক্রেডিট করা হয়েছে
+          referrer.balance += 100; 
           await referrer.save();
         }
       }
@@ -128,7 +122,6 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ৬. প্রমোশন ক্রিয়েট
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -218,7 +211,6 @@ app.get('/api/tasks', async (req, res) => {
   }
 });
 
-// ৯. টাস্ক কমপ্লিট API (5-second time lock)
 app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -306,7 +298,6 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ১০. ডেইলি বোনাস
 app.post('/api/daily-bonus', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId } = req.body;
@@ -333,7 +324,6 @@ app.post('/api/daily-bonus', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ১১. উইথড্র রিকোয়েস্ট
 app.post('/api/withdraw', verifyTelegramAuth, async (req, res) => {
   const { telegramId, username, starAmount, paymentMethod, accountNo } = req.body;
 
@@ -373,7 +363,6 @@ app.post('/api/withdraw', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ১২. টেলিগ্রাম স্টারস পেমেন্ট
 app.post('/api/send-invoice', verifyTelegramAuth, async (req, res) => {
   const { chatId, amount, telegramId } = req.body;
   try {
@@ -416,7 +405,6 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ১৩. ফ্রন্টএন্ড UI (টাস্ক লিস্টের নিচে স্ট্যান্ডার্ড ব্যানার অ্যাড সহ)
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -428,12 +416,13 @@ app.get('/', (req, res) => {
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #fff; margin: 0; padding: 12px; text-align: center; }
-            .header { background: #1e293b; padding: 12px 15px; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center; }
+            .header { background: #1e293b; padding: 12px 15px; border-radius: 12px; margin-bottom: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: flex; justify-content: space-between; align-items: center; position: relative; z-index: 100; }
             .header-info { text-align: left; }
             .balance { font-size: 14px; font-weight: bold; color: #38bdf8; }
             .menu-btn { background: #334155; color: #fff; border: none; font-size: 20px; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
             
-            .side-menu { position: fixed; top: 0; right: -280px; width: 260px; height: 100%; background: #1e293b; box-shadow: -5px 0 15px rgba(0,0,0,0.5); z-index: 1000; transition: 0.3s ease; text-align: left; padding: 20px; box-sizing: border-box; }
+            /* সাইড মেনু z-index ঠিক করা হয়েছে যেন সবকিছুর উপরে ভেসে ওঠে */
+            .side-menu { position: fixed; top: 0; right: -280px; width: 260px; height: 100%; background: #1e293b; box-shadow: -5px 0 25px rgba(0,0,0,0.8); z-index: 9999; transition: 0.3s ease; text-align: left; padding: 20px; box-sizing: border-box; }
             .side-menu.open { right: 0; }
             .menu-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-bottom: 15px; }
             .close-menu { background: #ef4444; color: #fff; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; }
@@ -468,6 +457,7 @@ app.get('/', (req, res) => {
                 <h3 style="margin:0 0 2px 0; font-size:15px;">🔥 Sub4Sub Exchange</h3>
                 <span class="balance">🪙 <span id="userBalance">0</span> Crd</span> | <span style="color:#22c55e; font-size:13px;">⭐ <span id="userStarBalance">0</span> Str</span>
             </div>
+            <!-- অ্যাপের নিজস্ব সাইড মেনু ওপেন করার বাটন -->
             <button class="menu-btn" onclick="toggleMenu()">⋮</button>
         </div>
 
@@ -497,7 +487,6 @@ app.get('/', (req, res) => {
             
             <div id="taskList">Loading tasks...</div>
 
-            <!-- স্ট্যান্ডার্ড ব্যানার অ্যাড (320x50) - টাস্ক লিস্টের একদম নিচে -->
             <div class="ad-container">
                 <script type="text/javascript">
                   atOptions = {
@@ -770,7 +759,7 @@ app.get('/', (req, res) => {
 
             async function requestWithdraw() {
                 const paymentMethod = document.getElementById('paymentMethod').value;
-                const accountNo = document.getElementById('accountNo'].value;
+                const accountNo = document.getElementById('accountNo').value;
                 const starAmount = document.getElementById('starAmount').value;
 
                 if(!accountNo || !starAmount) {
@@ -798,7 +787,6 @@ app.get('/', (req, res) => {
   `);
 });
 
-// রেন্ডার সার্ভার পোর্টের ফিক্স (Status 1 Error সমাধান)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`🚀 Server is running successfully on port ${PORT}`);
