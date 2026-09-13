@@ -1,226 +1,176 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const rateLimit = require('express-rate-limit');
-const TelegramBot = require('node-telegram-bot-api');
-const nodemailer = require('nodemailer');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// All Hardcoded Credentials
-const CONFIG = {
-  MONGODB_URI: "mongodb+srv://torikul570:Nadira1432@cluster0.m5iatns.mongodb.net/telegram_app?retryWrites=true&w=majority&appName=Cluster0",
-  TELEGRAM_BOT_TOKEN: "8801531798:AAEw7SJhnT1T8x69caPgMncjI6IPBAgWN3Q",
-  EMAIL_USER: "torikul570islam@gmail.com",
-  EMAIL_PASS: "zkqrkaxycksuksbr"
-};
-
-// Middleware
-app.use(cors());
 app.use(express.json());
+app.use(cors());
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://your_mongo_connection_string";
+
+mongoose.connect(MONGO_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+}).then(() => console.log("MongoDB Connected"))
+  .catch(err => console.log(err));
+
+// ইউজার স্কিমা (প্রোফাইল, পয়েন্ট, স্কিপড ও কমপ্লিটেড টাস্ক ট্র্যাক করার জন্য)
+const UserSchema = new mongoose.Schema({
+    telegramId: { type: String, unique: true },
+    points: { type: Number, default: 50 },
+    completedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
+    skippedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
+    isAdmin: { type: Boolean, default: false } // এডমিন কন্ট্রোল
 });
-app.use('/api/', limiter);
+const User = mongoose.model('User', UserSchema);
 
-// MongoDB Connection
-mongoose.connect(CONFIG.MONGODB_URI)
-  .then(() => console.log('✅ Connected to MongoDB successfully!'))
-  .catch((err) => console.error('❌ MongoDB connection error:', err));
-
-// User Schema
-const userSchema = new mongoose.Schema({
-  telegramId: { type: String, required: true, unique: true },
-  username: { type: String },
-  points: { type: Number, default: 100 },
-  createdAt: { type: Date, default: Date.now }
+const TaskSchema = new mongoose.Schema({
+    platform: String,
+    taskType: String,
+    link: String,
+    reward: { type: Number, default: 10 },
+    ownerId: String
 });
-const User = mongoose.model('User', userSchema);
+const Task = mongoose.model('Task', TaskSchema);
 
-// Task Schema
-const taskSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  platform: { type: String, required: true },
-  taskType: { type: String, required: true },
-  link: { type: String, required: true },
-  reward: { type: Number, required: true },
-  status: { type: String, default: 'active' },
-  createdAt: { type: Date, default: Date.now }
-});
-const Task = mongoose.model('Task', taskSchema);
-
-// History Schema
-const historySchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  taskId: { type: String, required: true },
-  earnedPoints: { type: Number, required: true },
-  completedAt: { type: Date, default: Date.now }
-});
-const History = mongoose.model('History', historySchema);
-
-// Telegram Bot Setup
-const bot = new TelegramBot(CONFIG.TELEGRAM_BOT_TOKEN, { polling: true });
-
-bot.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
-  const telegramId = msg.from.id.toString();
-  const username = msg.from.username || msg.from.first_name;
-
-  try {
-    let user = await User.findOne({ telegramId });
-    if (!user) {
-      user = new User({ telegramId, username, points: 100 });
-      await user.save();
-    }
-
-    bot.sendMessage(chatId, `🔥 Welcome to Like4Like Bot, ${username}!\n\nEarn free points or buy VIP Points using Telegram Stars 🌟`, {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '🚀 Open Mini App', web_app: { url: 'https://your-frontend-url.com' } }],
-          [{ text: '⭐ Buy Points with Stars', callback_data: 'buy_stars' }],
-          [{ text: '💰 My Balance', callback_data: 'check_balance' }]
-        ]
-      }
-    });
-  } catch (err) {
-    console.error('Bot start error:', err);
-  }
-});
-
-bot.on('callback_query', async (query) => {
-  const chatId = query.message.chat.id;
-  const telegramId = query.from.id.toString();
-
-  if (query.data === 'check_balance') {
-    const user = await User.findOne({ telegramId });
-    const points = user ? user.points : 0;
-    bot.answerCallbackQuery(query.id, { text: `Your balance is: ${points} Points` });
-  } 
-  else if (query.data === 'buy_stars') {
-    // Telegram Stars Invoice Send করার কোড
-    // XTR হলো Telegram Stars কারেন্সি কোড
-    const prices = [{ label: '1000 Points Pack', amount: 50 }]; // 50 Telegram Stars
-    bot.sendInvoice(
-      chatId,
-      'Boost Points (1000 Points)',
-      'Get 1000 points instantly to promote your links using Telegram Stars.',
-      'points_payload_1000',
-      '', // Telegram Star পেমেন্টের জন্য Provider Token খালি রাখতে হয়
-      'XTR', 
-      prices
-    );
-  }
-});
-
-// Telegram Stars পেমেন্ট সাকসেস হ্যান্ডেল করার জন্য
-bot.on('pre_checkout_query', (query) => {
-  bot.answerPreCheckoutQuery(query.id, true).catch(console.error);
-});
-
-bot.on('successful_payment', async (msg) => {
-  const chatId = msg.chat.id;
-  const telegramId = msg.from.id.toString();
-  const payment = msg.successful_payment;
-
-  if (payment.invoice_payload === 'points_payload_1000') {
-    let user = await User.findOne({ telegramId });
-    if (user) {
-      user.points += 1000;
-      await user.save();
-      bot.sendMessage(chatId, `🎉 Payment Successful! 1000 points added to your account. New Balance: ${user.points}`);
-    }
-  }
-});
-
-// Nodemailer Transporter
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: CONFIG.EMAIL_USER,
-    pass: CONFIG.EMAIL_PASS
-  }
-});
-
-// --- API ROUTES ---
-
+// ১. ইউজার প্রোফাইল ও ডাটা আনা
 app.get('/api/user/:telegramId', async (req, res) => {
-  try {
-    const user = await User.findOne({ telegramId: req.params.telegramId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json(user);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
+    try {
+        const { telegramId } = req.params;
+        let user = await User.findOne({ telegramId });
+        if (!user) {
+            // প্রথম ইউজারের ক্ষেত্রে প্রথমজনকে এডমিন বানিয়ে দিতে পারেন বা ডিফল্ট রাখতে পারেন
+            user = new User({ telegramId, points: 50 });
+            await user.save();
+        }
+        res.json(user);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
+// ২. টাস্ক লিস্ট আনা (যেগুলো কমপ্লিট বা স্কিপ করা হয়নি)
 app.get('/api/tasks/:telegramId', async (req, res) => {
-  try {
-    const { telegramId } = req.params;
-    const tasks = await Task.find({ status: 'active', userId: { $ne: telegramId } }).sort({ createdAt: -1 });
-    res.json(tasks);
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+    try {
+        const { telegramId } = req.params;
+        const user = await User.findOne({ telegramId });
+        if (!user) return res.json([]);
 
-app.post('/api/tasks', async (req, res) => {
-  try {
-    const { telegramId, platform, taskType, link, reward } = req.body;
-    const user = await User.findOne({ telegramId });
-    if (!user) return res.status(404).json({ error: 'User not found' });
+        const excludeIds = [...user.completedTasks, ...user.skippedTasks];
 
-    if (user.points < reward) {
-      return res.status(400).json({ error: 'Insufficient points!' });
+        // একসাথে মাত্র ২টি টাস্ক দেখানোর জন্য .limit(2) ব্যবহার করা হয়েছে
+        const tasks = await Task.find({ 
+            ownerId: { $ne: telegramId }, 
+            _id: { $nin: excludeIds } 
+        }).limit(2);
+
+        res.json(tasks);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    user.points -= reward;
-    await user.save();
-
-    const newTask = new Task({ userId: telegramId, platform, taskType, link, reward });
-    await newTask.save();
-
-    await transporter.sendMail({
-      from: CONFIG.EMAIL_USER,
-      to: CONFIG.EMAIL_USER,
-      subject: '🔥 Like4Like: New Task Created!',
-      text: `User ID: ${telegramId}\nPlatform: ${platform}\nType: ${taskType}\nLink: ${link}\nCost: ${reward} points.`
-    });
-
-    res.status(201).json({ message: 'Task created successfully!', task: newTask, remainingPoints: user.points });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
 });
 
+// ৩. টাস্ক স্কিপ করা API
+app.post('/api/tasks/skip', async (req, res) => {
+    try {
+        const { telegramId, taskId } = req.body;
+        const user = await User.findOne({ telegramId });
+        if (user && !user.skippedTasks.includes(taskId)) {
+            user.skippedTasks.push(taskId);
+            await user.save();
+        }
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ৪. টাস্ক কমপ্লিট করা API (পয়েন্ট যোগ হবে এবং অটো লিস্ট থেকে সরে যাবে)
 app.post('/api/tasks/complete', async (req, res) => {
-  try {
-    const { telegramId, taskId } = req.body;
-    const task = await Task.findById(taskId);
-    if (!task || task.status !== 'active') {
-      return res.status(400).json({ error: 'Task unavailable.' });
+    try {
+        const { telegramId, taskId } = req.body;
+        const user = await User.findOne({ telegramId });
+        const task = await Task.findById(taskId);
+
+        if (!user || !task) return res.status(404).json({ error: "Not found" });
+
+        if (!user.completedTasks.includes(taskId)) {
+            user.completedTasks.push(taskId);
+            user.points += task.reward;
+            await user.save();
+        }
+
+        res.json({ success: true, points: user.points });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    const worker = await User.findOne({ telegramId });
-    if (!worker) return res.status(404).json({ error: 'User not found' });
-
-    worker.points += task.reward;
-    await worker.save();
-
-    const history = new History({ userId: telegramId, taskId, earnedPoints: task.reward });
-    await history.save();
-
-    task.status = 'completed';
-    await task.save();
-
-    res.json({ message: `Successfully earned ${task.reward} points!`, newBalance: worker.points });
-  } catch (err) {
-    res.status(500).json({ error: 'Server error' });
-  }
 });
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+// ৫. টেলিগ্রাম স্টার দিয়ে ক্রেডিট বা পয়েন্ট কেনা (Telegram Stars Payment simulation / Integration)
+app.post('/api/buy-credits', async (req, res) => {
+    try {
+        const { telegramId, packageType } = req.body;
+        const user = await User.findOne({ telegramId });
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        let addedPoints = 0;
+        if (packageType === 'small') addedPoints = 100;     // যেমন: নির্দিষ্ট স্টার এর বিনিময়ে
+        else if (packageType === 'medium') addedPoints = 500;
+        else if (packageType === 'large') addedPoints = 1200;
+
+        user.points += addedPoints;
+        await user.save();
+
+        res.json({ success: true, points: user.points });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
+
+// ৬. এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
+app.post('/api/admin/give-credit', async (req, res) => {
+    try {
+        const { adminId, targetTelegramId, amount } = req.body;
+        const admin = await User.findOne({ telegramId: adminId });
+
+        // সিকিউরিটি চেক: শুধু এডমিন হলে পয়েন্ট দিতে পারবে
+        if (!admin || !admin.isAdmin) {
+            return res.status(403).json({ error: "Unauthorized! Admin only." });
+        }
+
+        const targetUser = await User.findOne({ telegramId: targetTelegramId });
+        if (!targetUser) return res.status(404).json({ error: "Target user not found!" });
+
+        targetUser.points += Number(amount);
+        await targetUser.save();
+
+        res.json({ success: true, newBalance: targetUser.points });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ৭. নতুন টাস্ক ক্রিয়েট API
+app.post('/api/tasks/create', async (req, res) => {
+    try {
+        const { telegramId, platform, taskType, link, reward } = req.body;
+        const user = await User.findOne({ telegramId });
+
+        if (!user || user.points < reward) {
+            return res.status(400).json({ error: "Insufficient points!" });
+        }
+
+        user.points -= Number(reward);
+        await user.save();
+
+        const newTask = new Task({ platform, taskType, link, reward: Number(reward), ownerId: telegramId });
+        await newTask.save();
+
+        res.json({ success: true, points: user.points });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
