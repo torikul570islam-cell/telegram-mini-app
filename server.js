@@ -36,7 +36,7 @@ const UserSchema = new mongoose.Schema({
   starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
-  skippedTasks: { type: Array, default: [] }, // স্কিপ করা টাস্ক ট্র্যাক রাখার জন্য
+  skippedTasks: { type: Array, default: [] }, 
   lastDailyBonus: { type: Date, default: null },
   lastTaskTime: { type: Date, default: null }
 });
@@ -47,8 +47,8 @@ const TaskSchema = new mongoose.Schema({
   platformType: String,
   socialLink: String,
   rewardPerTask: { type: Number, min: 10 }, 
-  budgetBalance: { type: Number, default: 0 }, // প্রমোশনের রিমেইনিং বাজেট ক্রেডিট
-  status: { type: String, default: 'Active' },
+  budgetBalance: { type: Number, default: 0 }, 
+  status: { type: String, default: 'Active' }, 
   completedCount: { type: Number, default: 0 },
   completedUsers: { type: Array, default: [] }
 });
@@ -124,7 +124,6 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// টাস্ক ক্রিয়েট - ফিক্সড ১০০ ক্রেডিট কাটার লজিক বা আপনার পুরনো লজিক অনুযায়ী
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -201,11 +200,10 @@ app.post('/api/toggle-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// টাস্ক রিট্রিভ - বাজেট জিরো হলে হাইড থাকা এবং সর্বোচ্চ ২টি টাস্ক দেখানো
 app.get('/api/tasks', async (req, res) => {
   try {
     const { platform, telegramId } = req.query;
-    let query = { status: 'Active', budgetBalance: { $gt: 0 } }; 
+    let query = { status: 'Active' }; 
     if (platform && platform !== 'All') {
       query.platformType = { $regex: platform, $options: 'i' };
     }
@@ -221,11 +219,14 @@ app.get('/api/tasks', async (req, res) => {
       tasks = tasks.filter(t => 
         t.creatorTelegramId !== String(telegramId) && 
         !t.completedUsers.includes(String(telegramId)) &&
-        !(user.skippedTasks && user.skippedTasks.includes(String(t._id)))
+        !(user.skippedTasks && user.skippedTasks.includes(String(t._id))) &&
+        t.budgetBalance >= t.rewardPerTask 
       );
+    } else {
+      tasks = tasks.filter(t => t.budgetBalance >= t.rewardPerTask);
     }
 
-    tasks = tasks.slice(0, 2);
+    tasks = tasks.slice(0, 2); 
 
     res.json(tasks);
   } catch (err) {
@@ -760,15 +761,15 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += \`
+                    html += `
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
-                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="\${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">\${task.socialLink}</a></p>
-                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +\${task.rewardPerTask} Credits | <strong>Budget Left:</strong> \${task.budgetBalance} Crd</p>
-                            <button class="action-btn" onclick="completeTask('\${task._id}', '\${task.socialLink}')">Visit & Earn Credits</button>
-                            <button class="skip-btn" onclick="skipTask('\${task._id}')">⏭️ Skip Task</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
+                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">${task.socialLink}</a></p>
+                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +${task.rewardPerTask} Credits | <strong>Budget Left:</strong> ${task.budgetBalance} Crd</p>
+                            <button class="action-btn" onclick="completeTask('${task._id}', '${task.socialLink}')">Visit & Earn Credits</button>
+                            <button class="skip-btn" onclick="skipTask('${task._id}')">⏭️ Skip Task</button>
                         </div>
-                    \`;
+                    `;
                 });
                 taskListDiv.innerHTML = html;
             }
@@ -793,14 +794,14 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += \`
+                    html += `
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
-                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">\${task.socialLink}</p>
-                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:\${task.status==='Active'?'#22c55e':'#ef4444'}">\${task.status}</span> | <strong>Budget Left:</strong> \${task.budgetBalance} Crd | <strong>Completed:</strong> \${task.completedCount} times</p>
-                            <button class="action-btn" style="background:\${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('\${task._id}')">\${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
+                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">${task.socialLink}</p>
+                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:${task.status==='Active'?'#22c55e':'#ef4444'}">${task.status}</span> | <strong>Budget Left:</strong> ${task.budgetBalance} Crd | <strong>Completed:</strong> ${task.completedCount} times</p>
+                            <button class="action-btn" style="background:${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('${task._id}')">${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
                         </div>
-                    \`;
+                    `;
                 });
                 myTaskListDiv.innerHTML = html;
             }
