@@ -36,7 +36,7 @@ const UserSchema = new mongoose.Schema({
   starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
-  skippedTasks: { type: Array, default: [] },
+  skippedTasks: { type: Array, default: [] }, // স্কিপ করা টাস্ক ট্র্যাক রাখার জন্য
   lastDailyBonus: { type: Date, default: null },
   lastTaskTime: { type: Date, default: null }
 });
@@ -47,7 +47,7 @@ const TaskSchema = new mongoose.Schema({
   platformType: String,
   socialLink: String,
   rewardPerTask: { type: Number, min: 10 }, 
-  budgetBalance: { type: Number, default: 0 }, 
+  budgetBalance: { type: Number, default: 0 }, // প্রমোশনের রিমেইনিং বাজেট ক্রেডিট
   status: { type: String, default: 'Active' },
   completedCount: { type: Number, default: 0 },
   completedUsers: { type: Array, default: [] }
@@ -124,7 +124,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// টাস্ক ক্রিয়েট - কোনো ক্রেডিট কাটা হবে না (ফ্রি টাস্ক অ্যাড)
+// টাস্ক ক্রিয়েট - ফিক্সড ১০০ ক্রেডিট কাটার লজিক বা আপনার পুরনো লজিক অনুযায়ী
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -138,21 +138,33 @@ app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "Minimum reward per task must be at least 10 credits!" });
     }
 
-    // এখানে ইউজারের ব্যালেন্স থেকে কোনো ক্রেডিট কাটা হচ্ছে না, ইনফিনিটি বা ডিফল্ট বাজেট হিসেবে সেট করা হলো যাতে লাইভ থাকে
-    const defaultBudget = 10000; // ফ্রি প্রমোশনের জন্য পর্যাপ্ত ভার্চুয়াল বাজেট বা পরিমাপ সেট করা হলো
+    const totalCost = reward * 10; 
+    if (user.balance < totalCost) {
+      return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion! (Min 10 tasks budget required)" });
+    }
+
+    const updatedUser = await User.findOneAndUpdate(
+      { telegramId: String(telegramId), balance: { $gte: totalCost } },
+      { $inc: { balance: -totalCost } },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(400).json({ success: false, message: "Transaction failed due to insufficient balance." });
+    }
 
     const newTask = new Task({
       creatorTelegramId: String(telegramId),
       platformType,
       socialLink,
       rewardPerTask: reward,
-      budgetBalance: defaultBudget, 
+      budgetBalance: totalCost, 
       status: 'Active',
       completedCount: 0
     });
     await newTask.save();
     
-    res.json({ success: true, message: "Promotion added successfully for free!", balance: user.balance });
+    res.json({ success: true, message: "Promotion added successfully!", balance: updatedUser.balance });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -177,6 +189,10 @@ app.post('/api/toggle-task', verifyTelegramAuth, async (req, res) => {
       return res.status(403).json({ error: "Unauthorized action" });
     }
 
+    if (task.status === 'Paused' && task.budgetBalance < task.rewardPerTask) {
+      return res.status(400).json({ success: false, message: "Cannot resume! Budget is empty. Please add more funds." });
+    }
+
     task.status = task.status === 'Active' ? 'Paused' : 'Active';
     await task.save();
     res.json({ success: true, status: task.status });
@@ -185,11 +201,11 @@ app.post('/api/toggle-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// টাস্ক রিট্রিভ - সর্বোচ্চ ২টি টাস্ক এবং কমপ্লিট/স্কিপ করা টাস্ক ফিল্টার করা
+// টাস্ক রিট্রিভ - বাজেট জিরো হলে হাইড থাকা এবং সর্বোচ্চ ২টি টাস্ক দেখানো
 app.get('/api/tasks', async (req, res) => {
   try {
     const { platform, telegramId } = req.query;
-    let query = { status: 'Active', budgetBalance: { $gt: 0 } };
+    let query = { status: 'Active', budgetBalance: { $gt: 0 } }; 
     if (platform && platform !== 'All') {
       query.platformType = { $regex: platform, $options: 'i' };
     }
@@ -209,7 +225,6 @@ app.get('/api/tasks', async (req, res) => {
       );
     }
 
-    // একবারে সর্বোচ্চ ২টি টাস্ক দেখানোর নিয়ম
     tasks = tasks.slice(0, 2);
 
     res.json(tasks);
@@ -251,6 +266,13 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
       session.endSession();
       return res.status(404).json({ error: "Task not found or inactive" });
     }
+
+    if (task.budgetBalance < task.rewardPerTask) {
+      await Task.findByIdAndUpdate(taskId, { status: 'Paused' }, { session });
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, message: "This task's budget has ended!" });
+    }
     
     if (task.creatorTelegramId === String(telegramId)) {
       await session.abortTransaction();
@@ -268,7 +290,7 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
     const newStatus = newBudget < task.rewardPerTask ? 'Paused' : 'Active';
 
     const updatedTask = await Task.findOneAndUpdate(
-      { _id: taskId, completedUsers: { $ne: String(telegramId) } },
+      { _id: taskId, completedUsers: { $ne: String(telegramId) }, budgetBalance: { $gte: task.rewardPerTask } },
       { 
         $push: { completedUsers: String(telegramId) },
         $inc: { completedCount: 1 },
@@ -280,7 +302,7 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
     if (!updatedTask) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ success: false, message: "Task completion failed!" });
+      return res.status(400).json({ success: false, message: "Task completion failed or budget exhausted!" });
     }
 
     const finalUser = await User.findOneAndUpdate(
@@ -543,7 +565,7 @@ app.get('/', (req, res) => {
 
         <div id="postTab" class="tab-content">
             <div class="card">
-                <h3 class="section-title" style="margin-top:0;">➕ Add Social Link (Free)</h3>
+                <h3 class="section-title" style="margin-top:0;">➕ Add Social Link</h3>
                 <label>Select Platform Type:</label>
                 <select id="platformType">
                     <option value="Telegram Post View">Telegram Post View</option>
@@ -564,8 +586,8 @@ app.get('/', (req, res) => {
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
                 <label>Credits Per Task Reward (Min 10):</label>
                 <input type="number" id="rewardPerTask" min="10" placeholder="e.g. 10">
-                <p style="font-size:11px; color:#22c55e;">Note: Adding tasks is completely FREE! No credits will be deducted.</p>
-                <button class="action-btn" onclick="createTask()">Add Link & Start Promotion (Free)</button>
+                <p style="font-size:11px; color:#94a3b8;">Note: 10 times of reward per task will be deducted as campaign budget (Min 10 tasks).</p>
+                <button class="action-btn" onclick="createTask()">Add Link & Start Promotion</button>
             </div>
         </div>
 
@@ -716,7 +738,7 @@ app.get('/', (req, res) => {
                 });
                 const data = await res.json();
                 if(data.success) {
-                    alert("Promotion added successfully for free!");
+                    alert("Promotion added successfully!");
                     document.getElementById('socialLink').value = '';
                     document.getElementById('rewardPerTask').value = '';
                     initApp();
@@ -742,7 +764,7 @@ app.get('/', (req, res) => {
                         <div class="card" style="border: 1px solid #334155;">
                             <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
                             <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="\${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">\${task.socialLink}</a></p>
-                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +\${task.rewardPerTask} Credits</p>
+                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +\${task.rewardPerTask} Credits | <strong>Budget Left:</strong> \${task.budgetBalance} Crd</p>
                             <button class="action-btn" onclick="completeTask('\${task._id}', '\${task.socialLink}')">Visit & Earn Credits</button>
                             <button class="skip-btn" onclick="skipTask('\${task._id}')">⏭️ Skip Task</button>
                         </div>
@@ -775,7 +797,7 @@ app.get('/', (req, res) => {
                         <div class="card" style="border: 1px solid #334155;">
                             <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
                             <p style="margin: 8px 0; word-break:break-all; font-size:13px;">\${task.socialLink}</p>
-                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:\${task.status==='Active'?'#22c55e':'#ef4444'}">\${task.status}</span> | <strong>Completed:</strong> \${task.completedCount} times</p>
+                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:\${task.status==='Active'?'#22c55e':'#ef4444'}">\${task.status}</span> | <strong>Budget Left:</strong> \${task.budgetBalance} Crd | <strong>Completed:</strong> \${task.completedCount} times</p>
                             <button class="action-btn" style="background:\${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('\${task._id}')">\${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
                         </div>
                     \`;
