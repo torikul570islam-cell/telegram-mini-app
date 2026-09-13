@@ -504,11 +504,6 @@ app.get('/', (req, res) => {
                 <h3 class="section-title" style="margin-top:0;">➕ Add Social Link</h3>
                 <label>Select Platform Type:</label>
                 <select id="platformType">
-                    <option value="YouTube Subscribe">YouTube Subscribe</option>
-                    <option value="YouTube Video Like">YouTube Video Like</option>
-                    <option value="YouTube Video Watch">YouTube Video Watch</option>
-                    <option value="Telegram Channel Join">Telegram Channel Join</option>
-                    <option value="Telegram Group Join">Telegram Group Join</option>
                     <option value="Telegram Post View">Telegram Post View</option>
                     <option value="Facebook Page Like">Facebook Page Like</option>
                     <option value="Facebook Post Like">Facebook Post Like</option>
