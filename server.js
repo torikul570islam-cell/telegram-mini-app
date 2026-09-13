@@ -5,6 +5,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
@@ -12,10 +13,8 @@ app.set('trust proxy', 1);
 app.use(express.json());
 app.use(cors());
 
-// ব্রাউজারে রেন্ডার লিংকে ঢুকলে যেন Cannot GET না দেখায়
-app.get('/', (req, res) => {
-  res.send('🚀 Telegram Mini App Backend Server is Running Successfully!');
-});
+// ফ্রন্টএন্ড স্ট্যাটিক ফাইল সার্ভ করার জন্য
+app.use(express.static(path.join(__dirname, 'public')));
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
@@ -281,6 +280,11 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
     session.endSession();
     res.status(500).json({ error: err.message });
   }
+});
+
+// সব রিকোয়েস্টের জন্য ফ্রন্টএন্ড index.html ফাইল সার্ভ করার ক্যাচ-অল রাউট
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
