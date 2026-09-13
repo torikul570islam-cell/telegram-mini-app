@@ -521,6 +521,7 @@ app.get('/', (req, res) => {
                     <option value="App Download">📱 App Download & Review</option>
                     <option value="Facebook Share">↗️ Facebook Post Share</option>
                     <option value="Discord Join">💬 Discord Server Join</option>
+                    <option value="Custom Option Name">✨ Custom Option Name</option>
                 </select>
                 <label>Social Link / URL:</label>
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
