@@ -11,9 +11,6 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// মিনি অ্যাপ ওপেন করার জন্য স্ট্যাটিক ফোল্ডার
-app.use(express.static('public'));
-
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const ADMIN_ID = process.env.ADMIN_ID; 
@@ -39,7 +36,6 @@ const UserSchema = new mongoose.Schema({
   starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
-  skippedTasks: { type: Array, default: [] }, // স্কিপ করা টাস্ক ট্র্যাক করার জন্য
   lastDailyBonus: { type: Date, default: null },
   lastTaskTime: { type: Date, default: null }
 });
@@ -56,7 +52,7 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: false });
+const bot = new TelegramBot(BOT_TOKEN);
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -88,12 +84,6 @@ function verifyTelegramAuth(req, res, next) {
     if (calculatedHash !== hash) {
       return res.status(401).json({ error: "Unauthorized: Telegram WebApp hash verification failed!" });
     }
-
-    const userParam = urlParams.get('user');
-    if (userParam) {
-      req.telegramUser = JSON.parse(userParam);
-    }
-
     next();
   } catch (e) {
     return res.status(401).json({ error: "Authentication failed!" });
@@ -132,45 +122,6 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ফিচারের ১: অ্যাডমিন প্যানেল থেকে আইডি দিয়ে ক্রেডিট বা স্টার গিফট করার এপিআই
-app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
-  try {
-    const requesterId = String(req.telegramUser?.id);
-    if (requesterId !== String(ADMIN_ID)) {
-      return res.status(403).json({ success: false, error: "Unauthorized: Admin access only!" });
-    }
-
-    const { targetUserId, amount, type } = req.body; 
-    const numAmount = Number(amount);
-    if (isNaN(numAmount) || numAmount <= 0) {
-      return res.status(400).json({ success: false, error: "Invalid reward amount!" });
-    }
-
-    let updateField = type === 'starBalance' ? { $inc: { starBalance: numAmount } } : { $inc: { balance: numAmount } };
-    
-    let targetUser = await User.findOneAndUpdate(
-      { telegramId: String(targetUserId) },
-      updateField,
-      { new: true }
-    );
-
-    if (!targetUser) {
-      return res.status(404).json({ success: false, error: "Target user not found in database!" });
-    }
-
-    try {
-      if (bot) {
-        await bot.sendMessage(targetUserId, `🎁 Congratulations! Admin rewarded you with ${numAmount} ${type === 'starBalance' ? 'Stars' : 'Credits'}.`);
-      }
-    } catch(e) {}
-
-    res.json({ success: true, message: `Successfully rewarded ${numAmount} to user ${targetUserId}!` });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ফিচারের ৩: টাস্ক ক্রিয়েট করার সময় কোনো ব্যালেন্স কাটবে না (ফ্রি করা হয়েছে)
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -184,191 +135,16 @@ app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "Minimum reward per task must be at least 10 credits!" });
     }
 
-    const newTask = new Task({
-      creatorTelegramId: String(telegramId),
-      platformType,
-      socialLink,
-      rewardPerTask: reward,
-      status: 'Active',
-      completedCount: 0
-    });
-    await newTask.save();
-    
-    res.json({ success: true, message: "Task created successfully!", balance: user.balance });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ইউজারের নিজের টাস্ক ডিলিট করার অপশন
-app.delete('/api/task/:taskId', verifyTelegramAuth, async (req, res) => {
-  try {
-    const { taskId } = req.params;
-    const telegramId = req.telegramUser?.id || req.body.telegramId;
-
-    let task = await Task.findById(taskId);
-    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
-
-    if (task.creatorTelegramId !== String(telegramId)) {
-      return res.status(403).json({ success: false, message: "Unauthorized to delete this task" });
+    const totalCost = reward * 10; 
+    if (user.balance < totalCost) {
+      return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion! (Min 10 tasks budget required)" });
     }
 
-    await Task.findByIdAndDelete(taskId);
-    res.json({ success: true, message: "Task deleted successfully" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/my-tasks/:telegramId', async (req, res) => {
-  try {
-    const tasks = await Task.find({ creatorTelegramId: String(req.params.telegramId) });
-    res.json(tasks);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ফিচারের ২: একসাথে সর্বোচ্চ ২টি টাস্ক দেখানো, স্কিপ বা কমপ্লিট করলে নতুন আসা এবং ক্রিয়েটরের ব্যালেন্স না থাকলে ফ্রিজ হওয়া
-app.get('/api/tasks', async (req, res) => {
-  try {
-    const { platform, telegramId } = req.query;
-    let query = { status: 'Active' }; 
-    if (platform && platform !== 'All') {
-      query.platformType = { $regex: platform, $options: 'i' };
-    }
-    
-    let user = null;
-    if (telegramId) {
-      user = await User.findOne({ telegramId: String(telegramId) });
-    }
-
-    let tasks = await Task.find(query);
-    let validTasks = [];
-
-    for (let t of tasks) {
-      let creator = await User.findOne({ telegramId: String(t.creatorTelegramId) });
-      
-      if (!creator || creator.balance < t.rewardPerTask) {
-        if (t.status === 'Active') {
-          t.status = 'Paused';
-          await t.save();
-        }
-        continue;
-      }
-
-      if (user) {
-        if (
-          t.creatorTelegramId !== String(telegramId) && 
-          !t.completedUsers.includes(String(telegramId)) &&
-          !(user.skippedTasks && user.skippedTasks.includes(String(t._id))) &&
-          t.status === 'Active'
-        ) {
-          validTasks.push(t);
-        }
-      } else {
-        if (t.status === 'Active') {
-          validTasks.push(t);
-        }
-      }
-    }
-
-    validTasks = validTasks.slice(0, 2); 
-    res.json(validTasks);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/skip-task', verifyTelegramAuth, async (req, res) => {
-  try {
-    const { telegramId, taskId } = req.body;
-    if (!telegramId || !taskId) return res.status(400).json({ error: "Invalid data" });
-
-    await User.findOneAndUpdate(
-      { telegramId: String(telegramId) },
-      { $addToSet: { skippedTasks: taskId } }
+    const updatedUser = await User.findOneAndUpdate(
+      { telegramId: String(telegramId), balance: { $gte: totalCost } },
+      { $inc: { balance: -totalCost } },
+      { new: true }
     );
 
-    res.json({ success: true, message: "Task skipped successfully." });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
-  const session = await mongoose.startSession();
-  session.startTransaction();
-  try {
-    const { telegramId, taskId } = req.body;
-    if (!telegramId || !taskId) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ error: "Invalid data" });
-    }
-
-    let task = await Task.findOne({ _id: taskId, status: 'Active' }).session(session);
-    if (!task) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(404).json({ error: "Task not found or inactive" });
-    }
-
-    let creator = await User.findOne({ telegramId: String(task.creatorTelegramId) }).session(session);
-    if (!creator || creator.balance < task.rewardPerTask) {
-      await Task.findByIdAndUpdate(taskId, { status: 'Paused' }, { session });
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ success: false, message: "Task creator has insufficient balance! Task frozen." });
-    }
-    
-    if (task.creatorTelegramId === String(telegramId)) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ success: false, message: "You cannot complete your own task!" });
-    }
-
-    if (task.completedUsers.includes(String(telegramId))) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ success: false, message: "You have already completed this task!" });
-    }
-
-    creator.balance -= task.rewardPerTask;
-    await creator.save({ session });
-
-    let newStatus = creator.balance < task.rewardPerTask ? 'Paused' : 'Active';
-
-    const updatedTask = await Task.findOneAndUpdate(
-      { _id: taskId, completedUsers: { $ne: String(telegramId) } },
-      { 
-        $push: { completedUsers: String(telegramId) },
-        $inc: { completedCount: 1 },
-        $set: { status: newStatus }
-      },
-      { new: true, session }
-    );
-
-    const finalUser = await User.findOneAndUpdate(
-      { telegramId: String(telegramId) },
-      { 
-        $inc: { balance: task.rewardPerTask },
-        $push: { completedTasks: taskId },
-        $addToSet: { skippedTasks: taskId } 
-      },
-      { new: true, session }
-    );
-
-    await session.commitTransaction();
-    session.endSession();
-
-    res.json({ success: true, balance: finalUser.balance });
-  } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
-    res.status(500).json({ error: err.message });
-  }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+    if (!updatedUser) {
+      return
