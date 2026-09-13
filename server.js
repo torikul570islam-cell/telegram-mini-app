@@ -421,7 +421,6 @@ app.get('/', (req, res) => {
             .balance { font-size: 14px; font-weight: bold; color: #38bdf8; }
             .menu-btn { background: #334155; color: #fff; border: none; font-size: 20px; padding: 6px 12px; border-radius: 8px; cursor: pointer; }
             
-            /* সাইড মেনু z-index ঠিক করা হয়েছে যেন সবকিছুর উপরে ভেসে ওঠে */
             .side-menu { position: fixed; top: 0; right: -280px; width: 260px; height: 100%; background: #1e293b; box-shadow: -5px 0 25px rgba(0,0,0,0.8); z-index: 9999; transition: 0.3s ease; text-align: left; padding: 20px; box-sizing: border-box; }
             .side-menu.open { right: 0; }
             .menu-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; padding-bottom: 10px; margin-bottom: 15px; }
@@ -441,7 +440,7 @@ app.get('/', (req, res) => {
             .cat-btn.active, .cat-btn:hover { background: #38bdf8; color: #0f172a; border-color: #38bdf8; }
 
             .ad-container {
-                margin-top: 30px;
+                margin-top: 20px;
                 margin-bottom: 20px;
                 width: 100%;
                 display: flex;
@@ -457,7 +456,6 @@ app.get('/', (req, res) => {
                 <h3 style="margin:0 0 2px 0; font-size:15px;">🔥 Sub4Sub Exchange</h3>
                 <span class="balance">🪙 <span id="userBalance">0</span> Crd</span> | <span style="color:#22c55e; font-size:13px;">⭐ <span id="userStarBalance">0</span> Str</span>
             </div>
-            <!-- অ্যাপের নিজস্ব সাইড মেনু ওপেন করার বাটন -->
             <button class="menu-btn" onclick="toggleMenu()">⋮</button>
         </div>
 
@@ -487,6 +485,7 @@ app.get('/', (req, res) => {
             
             <div id="taskList">Loading tasks...</div>
 
+            <!-- অ্যাডটি এখন টাস্ক লিস্টের নিচে সেট করা হয়েছে যাতে শুরুতে বাধার সৃষ্টি না করে -->
             <div class="ad-container">
                 <script type="text/javascript">
                   atOptions = {
@@ -673,14 +672,14 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += \`
+                    html += `
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
-                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="\${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">\${task.socialLink}</a></p>
-                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +\${task.rewardPerTask} Credits</p>
-                            <button class="action-btn" onclick="completeTask('\${task._id}', '\${task.socialLink}')">Visit & Earn Credits</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
+                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">${task.socialLink}</a></p>
+                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +${task.rewardPerTask} Credits</p>
+                            <button class="action-btn" onclick="completeTask('${task._id}', '${task.socialLink}')">Visit & Earn Credits</button>
                         </div>
-                    \`;
+                    `;
                 });
                 taskListDiv.innerHTML = html;
             }
@@ -697,14 +696,14 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += \`
+                    html += `
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
-                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">\${task.socialLink}</p>
-                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:\${task.status==='Active'?'#22c55e':'#ef4444'}">\${task.status}</span> | <strong>Completed:</strong> \${task.completedCount} times</p>
-                            <button class="action-btn" style="background:\${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('\${task._id}')">\${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
+                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">${task.socialLink}</p>
+                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:${task.status==='Active'?'#22c55e':'#ef4444'}">${task.status}</span> | <strong>Completed:</strong> ${task.completedCount} times</p>
+                            <button class="action-btn" style="background:${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('${task._id}')">${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
                         </div>
-                    \`;
+                    `;
                 });
                 myTaskListDiv.innerHTML = html;
             }
