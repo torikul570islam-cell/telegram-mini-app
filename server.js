@@ -54,7 +54,6 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// Safe Bot Initialization to prevent deploy crashes
 let bot = null;
 if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -95,6 +94,14 @@ function verifyTelegramAuth(req, res, next) {
     return res.status(401).json({ error: "Authentication failed!" });
   }
 }
+
+// Config endpoint to safely pass environment variables to frontend without breaking syntax
+app.get('/api/config', (req, res) => {
+  res.json({
+    adminId: ADMIN_ID,
+    botUsername: BOT_USERNAME
+  });
+});
 
 app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   try {
@@ -681,7 +688,7 @@ app.get('/', (req, res) => {
             const urlParams = new URLSearchParams(window.location.search);
             const referralId = urlParams.get('start') || null;
             let currentPlatform = 'All';
-            const ADMIN_TELEGRAM_ID = "${ADMIN_ID}";
+            let ADMIN_TELEGRAM_ID = "";
 
             async function secureFetch(url, options = {}) {
                 options.headers = options.headers || {};
@@ -701,6 +708,11 @@ app.get('/', (req, res) => {
 
             async function initApp() {
                 try {
+                    // Fetch config first to load admin and bot username safely
+                    const configRes = await fetch('/api/config');
+                    const configData = await configRes.json();
+                    ADMIN_TELEGRAM_ID = configData.adminId;
+
                     const res = await secureFetch('/api/user', {
                         method: 'POST',
                         body: JSON.stringify({ telegramId: String(user.id), username: user.username, referralId })
@@ -718,8 +730,7 @@ app.get('/', (req, res) => {
                         document.getElementById('adminMenuBtn').style.display = 'block';
                     }
 
-                    const botUsername = "${BOT_USERNAME}"; 
-                    document.getElementById('refLink').value = 'https://t.me/' + botUsername + '?start=' + user.id;
+                    document.getElementById('refLink').value = 'https://t.me/' + configData.botUsername + '?start=' + user.id;
 
                     loadTasks(currentPlatform);
                 } catch(err) {
@@ -875,7 +886,7 @@ app.get('/', (req, res) => {
             }
 
             async function requestWithdraw() {
-                const paymentMethod = document.getElementById('paymentMethod').value;
+                The paymentMethod = document.getElementById('paymentMethod').value;
                 const accountNo = document.getElementById('accountNo').value;
                 const starAmount = document.getElementById('starAmount').value;
 
