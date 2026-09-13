@@ -16,6 +16,11 @@ app.use(cors());
 // ফ্রন্টএন্ড স্ট্যাটিক ফাইল সার্ভ করার জন্য
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ব্রাউজারে বা লিংকে ঢুকলে Sub4Sub দেখাবে
+app.get('/health', (req, res) => {
+  res.send('🚀 Sub4Sub Telegram Mini App Backend Server is Running Successfully!');
+});
+
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
 const ADMIN_ID = process.env.ADMIN_ID; 
@@ -31,7 +36,7 @@ const apiLimiter = rateLimit({
 app.use('/api/', apiLimiter);
 
 mongoose.connect(MONGO_URI)
-.then(() => console.log('✅ MongoDB Connected Successfully'))
+.then(() => console.log('✅ Sub4Sub MongoDB Connected Successfully'))
 .catch((err) => console.error('❌ MongoDB Connection Error:', err));
 
 const UserSchema = new mongoose.Schema({
@@ -282,10 +287,10 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// সব রিকোয়েস্টের জন্য ফ্রন্টএন্ড index.html ফাইল সার্ভ করার ক্যাচ-অল রাউট
+// সাব-ফাইল বা ফ্রন্টএন্ড রাউটের জন্য ক্যাচ-অল
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Sub4Sub Server running on port ${PORT}`));
