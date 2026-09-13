@@ -36,7 +36,7 @@ mongoose.connect(MONGO_URI)
 const UserSchema = new mongoose.Schema({
   telegramId: { type: String, required: true, unique: true, index: true },
   username: String,
-  balance: { type: Number, default: 100, min: 0 },         
+  balance: { type: Number, default: 20, min: 0 },         // ডিফল্ট ব্যালেন্স ২০ ক্রেডিট
   starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
@@ -66,7 +66,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// ৪. ফিক্সড টেলিগ্রাম ডাটা ভ্যালিডেশন মিডলওয়্যার (কোনো বাইপাস নেই)
+// ৪. ফিক্সড টেলিগ্রাম ডাটা ভ্যালিডেশন মিডলওয়্যার
 function verifyTelegramAuth(req, res, next) {
   const initData = req.headers['x-telegram-init-data'];
   if (!initData) {
@@ -95,7 +95,7 @@ function verifyTelegramAuth(req, res, next) {
   }
 }
 
-// ৫. ইউজার রেজিস্ট্রেশন ও সেলফ-রেফারেল ফিক্স
+// ৫. ইউজার রেজিস্ট্রেশন ও রেফারেল ফিক্স (রেফার বোনাস ২০ ক্রেডিট)
 app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, username, referralId } = req.body;
@@ -109,7 +109,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
       user = new User({ 
         telegramId: String(telegramId), 
         username: username || 'Unknown', 
-        balance: 100, 
+        balance: 20, 
         referredBy: validReferral 
       });
       await user.save();
@@ -117,7 +117,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
       if (validReferral) {
         let referrer = await User.findOne({ telegramId: validReferral });
         if (referrer) {
-          referrer.balance += 50;
+          referrer.balance += 20; // রেফার বোনাস ২০ ক্রেডিট
           await referrer.save();
         }
       }
@@ -128,7 +128,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ৬. প্রমোশন ক্রিয়েট
+// ৬. প্রমোশন ক্রিয়েট (মিনিমাম কোয়ান্টিটি/মাল্টিপ্লায়ার ১০ করা হয়েছে)
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -142,9 +142,9 @@ app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "Reward per task must be greater than 0!" });
     }
 
-    const totalCost = reward * 10; 
+    const totalCost = reward * 10; // ন্যূনতম ১০ বা গেটওয়ে মাল্টিপ্লায়ার ১০
     if (user.balance < totalCost) {
-      return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion!" });
+      return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion! (Min 10 tasks budget required)" });
     }
 
     const updatedUser = await User.findOneAndUpdate(
@@ -218,7 +218,7 @@ app.get('/api/tasks', async (req, res) => {
   }
 });
 
-// ৯. শতভাগ সুরক্ষিত ও এটমিক টাস্ক কমপ্লিট API (5-second time lock fix)
+// ৯. টাস্ক কমপ্লিট API (5-second time lock)
 app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -306,7 +306,7 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ১০. ডেইলি বোনাস
+// ১০. ডেইলি বোনাস (১০ ক্রেডিট)
 app.post('/api/daily-bonus', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId } = req.body;
@@ -323,11 +323,11 @@ app.post('/api/daily-bonus', verifyTelegramAuth, async (req, res) => {
       }
     }
 
-    user.balance += 100;
+    user.balance += 10; // ডেইলি বোনাস ১০ ক্রেডিট
     user.lastDailyBonus = now;
     await user.save();
 
-    res.json({ success: true, message: "Successfully claimed 100 Daily Bonus credits!", balance: user.balance });
+    res.json({ success: true, message: "Successfully claimed 10 Daily Bonus credits!", balance: user.balance });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -416,7 +416,7 @@ bot.on('message', async (msg) => {
   }
 });
 
-// ১৩. ফ্রন্টএন্ড UI
+// ১৩. ফ্রন্টএন্ড UI (আপডেটেড ব্যালেন্স, ডেইলি বোনাস ১০ এবং মিনিমাম টাস্ক ১০)
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -506,7 +506,7 @@ app.get('/', (req, res) => {
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
                 <label>Credits Per Task Reward (Min 1):</label>
                 <input type="number" id="rewardPerTask" min="1" placeholder="e.g. 5">
-                <p style="font-size:11px; color:#94a3b8;">Note: 10x reward credits will be deducted instantly from your balance as total budget.</p>
+                <p style="font-size:11px; color:#94a3b8;">Note: 10x reward credits will be deducted instantly as minimum budget for 10 engagements.</p>
                 <button class="action-btn" onclick="createTask()">Add Link & Start Promotion</button>
             </div>
         </div>
@@ -519,8 +519,8 @@ app.get('/', (req, res) => {
         <div id="bonusTab" class="tab-content">
             <div class="card" style="text-align: center;">
                 <h3 class="section-title" style="margin-top:0; text-align: center;">🏆 Daily Free Bonus</h3>
-                <p style="font-size: 13px; color: #94a3b8;">Claim your free 100 credits every 24 hours to promote your pages!</p>
-                <button class="action-btn" style="background:#22c55e; color:#fff;" onclick="claimDailyBonus()">Claim Daily Bonus (+100 Crd)</button>
+                <p style="font-size: 13px; color: #94a3b8;">Claim your free 10 credits every 24 hours to promote your pages!</p>
+                <button class="action-btn" style="background:#22c55e; color:#fff;" onclick="claimDailyBonus()">Claim Daily Bonus (+10 Crd)</button>
             </div>
         </div>
 
@@ -544,7 +544,7 @@ app.get('/', (req, res) => {
                 <p><strong>User ID:</strong> <span id="pId">-</span></p>
                 <p><strong>Credit Balance:</strong> <span id="pBalance" style="color:#38bdf8; font-weight:bold;">0</span></p>
                 <p><strong>Star Balance:</strong> <span id="pStarBalance" style="color:#22c55e; font-weight:bold;">0</span> Stars</p>
-                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">Referral Link (Earn 50 Crd per join):</p>
+                <p style="font-size: 12px; color: #94a3b8; margin-bottom: 4px;">Referral Link (Earn 20 Crd per join):</p>
                 <input type="text" id="refLink" readonly style="font-size: 11px; background: #111;">
             </div>
 
@@ -726,28 +726,28 @@ app.get('/', (req, res) => {
                 });
                 const data = await res.json();
                 alert(data.message);
-                initApp();
-            }
-
-            async function buyStarsInvoice() {
-                const amount = Number(document.getElementById('starPackage').value);
-                const res = await secureFetch('/api/send-invoice', {
-                    method: 'POST',
-                    body: JSON.stringify({ chatId: user.id, amount, telegramId: user.id })
-                });
-                const data = await res.json();
                 if(data.success) {
-                    alert("Invoice sent to your Telegram chat!");
+                    initApp();
                 }
             }
 
-            async function requestWithdraw() {
-                const paymentMethod = document.getElementById('paymentMethod').value;
-                const accountNo = document.getElementById('accountNo').value;
-                const starAmount = Number(document.getElementById('starAmount').value);
+            async function buyStarsInvoice() {
+                const amount = document.getElementById('starPackage').value;
+                const res = await secureFetch('/api/send-invoice', {
+                    method: 'POST',
+                    body: JSON.stringify({ chatId: user.id, amount: Number(amount), telegramId: user.id })
+                });
+                const data = await res.json();
+                if(!data.success) alert("Failed to generate invoice");
+            }
 
-                if(!accountNo || !starAmount || starAmount < 500) {
-                    alert("Please fill all fields correctly (Min withdraw 500 Stars)!");
+            async function requestWithdraw() {
+                const paymentMethod = document.getElementById('paymentMethod500').value || document.getElementById('paymentMethod').value;
+                const accountNo = document.getElementById('accountNo').value;
+                const starAmount = document.getElementById('starAmount').value;
+
+                if(!accountNo || !starAmount) {
+                    alert("Please fill all fields!");
                     return;
                 }
 
@@ -756,8 +756,8 @@ app.get('/', (req, res) => {
                     body: JSON.stringify({ telegramId: String(user.id), username: user.username, starAmount, paymentMethod, accountNo })
                 });
                 const data = await res.json();
-                alert(data.message);
-                initApp();
+                alert(data.message || data.error);
+                if(data.success) initApp();
             }
 
             initApp();
@@ -769,5 +769,5 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Fully Atomic & Secured Server is running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
