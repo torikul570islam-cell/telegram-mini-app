@@ -476,11 +476,11 @@ app.get('/', (req, res) => {
             <h3 class="section-title" style="margin-top:0;">🎯 Select Category to Earn</h3>
             <div class="cat-grid">
                 <button class="cat-btn active" onclick="filterTasks('All', this)">🌐 All Networks</button>
-                <button class="cat-btn" onclick="filterTasks('YouTube', this)">▶️ YouTube Subs/Likes</button>
-                <button class="cat-btn" onclick="filterTasks('Facebook', this)">📘 Facebook Likes/Follow</button>
-                <button class="cat-btn" onclick="filterTasks('Instagram', this)">📸 Instagram Likes/Follow</button>
-                <button class="cat-btn" onclick="filterTasks('TikTok', this)">🎵 TikTok Likes/Follow</button>
-                <button class="cat-btn" onclick="filterTasks('Twitter', this)">🐦 X (Twitter) Follow</button>
+                <button class="cat-btn" onclick="filterTasks('YouTube', this)">▶️ YouTube</button>
+                <button class="cat-btn" onclick="filterTasks('Telegram', this)">📢 Telegram</button>
+                <button class="cat-btn" onclick="filterTasks('Facebook', this)">📘 Facebook</button>
+                <button class="cat-btn" onclick="filterTasks('Instagram', this)">📸 Instagram</button>
+                <button class="cat-btn" onclick="filterTasks('Website', this)">🌐 Website Visit</button>
             </div>
             
             <div id="taskList">Loading tasks...</div>
@@ -504,8 +504,13 @@ app.get('/', (req, res) => {
                 <h3 class="section-title" style="margin-top:0;">➕ Add Social Link</h3>
                 <label>Select Platform Type:</label>
                 <select id="platformType">
+                    <!-- পুরনো সার্ভিসসমূহ -->
                     <option value="YouTube Subscribe">YouTube Subscribe</option>
                     <option value="YouTube Video Like">YouTube Video Like</option>
+                    <option value="YouTube Video Watch">YouTube Video Watch</option>
+                    <option value="Telegram Channel Join">Telegram Channel Join</option>
+                    <option value="Telegram Group Join">Telegram Group Join</option>
+                    <option value="Telegram Post View">Telegram Post View</option>
                     <option value="Facebook Page Like">Facebook Page Like</option>
                     <option value="Facebook Post Like">Facebook Post Like</option>
                     <option value="Instagram Follower">Instagram Follower</option>
@@ -513,6 +518,12 @@ app.get('/', (req, res) => {
                     <option value="TikTok Follower">TikTok Follower</option>
                     <option value="TikTok Video Like">TikTok Video Like</option>
                     <option value="Twitter/X Follower">Twitter/X Follower</option>
+
+                    <!-- নতুন সার্ভিস অপশনসমূহ -->
+                    <option value="Website Visit">🌐 Website Visit / Traffic</option>
+                    <option value="App Download">📱 App Download & Review</option>
+                    <option value="Facebook Share">↗️ Facebook Post Share</option>
+                    <option value="Discord Join">💬 Discord Server Join</option>
                 </select>
                 <label>Social Link / URL:</label>
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
@@ -671,14 +682,14 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += \`
+                    html += `
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
-                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="\${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">\${task.socialLink}</a></p>
-                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +\${task.rewardPerTask} Credits</p>
-                            <button class="action-btn" onclick="completeTask('\${task._id}', '\${task.socialLink}')">Visit & Earn Credits</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
+                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">${task.socialLink}</a></p>
+                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +${task.rewardPerTask} Credits</p>
+                            <button class="action-btn" onclick="completeTask('${task._id}', '${task.socialLink}')">Visit & Earn Credits</button>
                         </div>
-                    \`;
+                    `;
                 });
                 taskListDiv.innerHTML = html;
             }
@@ -695,14 +706,14 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += \`
+                    html += `
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
-                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">\${task.socialLink}</p>
-                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:\${task.status==='Active'?'#22c55e':'#ef4444'}">\${task.status}</span> | <strong>Completed:</strong> \${task.completedCount} times</p>
-                            <button class="action-btn" style="background:\${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('\${task._id}')">\${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
+                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">${task.socialLink}</p>
+                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:${task.status==='Active'?'#22c55e':'#ef4444'}">${task.status}</span> | <strong>Completed:</strong> ${task.completedCount} times</p>
+                            <button class="action-btn" style="background:${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('${task._id}')">${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
                         </div>
-                    \`;
+                    `;
                 });
                 myTaskListDiv.innerHTML = html;
             }
@@ -737,8 +748,12 @@ app.get('/', (req, res) => {
                     body: JSON.stringify({ telegramId: String(user.id) })
                 });
                 const data = await res.json();
-                alert(data.message || data.error);
-                if(data.success) { initApp(); }
+                if(data.success) {
+                    alert(data.message);
+                    initApp();
+                } else {
+                    alert(data.message || data.error);
+                }
             }
 
             async function buyStarsInvoice() {
@@ -749,9 +764,9 @@ app.get('/', (req, res) => {
                 });
                 const data = await res.json();
                 if(data.success) {
-                    alert("Invoice generated! Check bot chat to complete payment with Telegram Stars.");
+                    alert("Invoice generated in your Telegram chat. Please check your bot chat to pay with Stars!");
                 } else {
-                    alert(data.error);
+                    alert(data.error || "Failed to create invoice.");
                 }
             }
 
@@ -761,23 +776,23 @@ app.get('/', (req, res) => {
                 const starAmount = document.getElementById('starAmount').value;
 
                 if(!accountNo || !starAmount) {
-                    alert("Please fill in all withdraw fields!");
+                    alert("Please fill in all withdrawal fields!");
                     return;
                 }
 
                 const res = await secureFetch('/api/withdraw', {
                     method: 'POST',
-                    body: JSON.stringify({ 
-                        telegramId: String(user.id), 
-                        username: user.username, 
-                        starAmount, 
-                        paymentMethod, 
-                        accountNo 
-                    })
+                    body: JSON.stringify({ telegramId: String(user.id), username: user.username, starAmount, paymentMethod, accountNo })
                 });
                 const data = await res.json();
-                alert(data.message || data.error);
-                if(data.success) { initApp(); }
+                if(data.success) {
+                    alert(data.message);
+                    document.getElementById('accountNo').value = '';
+                    document.getElementById('starAmount').value = '';
+                    initApp();
+                } else {
+                    alert(data.message || data.error);
+                }
             }
         </script>
     </body>
@@ -786,6 +801,4 @@ app.get('/', (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server is running successfully on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
