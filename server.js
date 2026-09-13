@@ -5,11 +5,15 @@ const TelegramBot = require('node-telegram-bot-api');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
+
+// আপনার মূল কোডের স্ট্যাটিক ফোল্ডার ও রুট পাথ (যাতে Cannot GET / না আসে)
+app.use(express.static('public'));
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
@@ -47,17 +51,13 @@ const TaskSchema = new mongoose.Schema({
   platformType: String,
   socialLink: String,
   rewardPerTask: { type: Number, min: 10 }, 
-  budgetBalance: { type: Number, default: 0 }, 
   status: { type: String, default: 'Active' },
   completedCount: { type: Number, default: 0 },
   completedUsers: { type: Array, default: [] }
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-let bot = null;
-if (BOT_TOKEN) {
-  bot = new TelegramBot(BOT_TOKEN, { polling: false });
-}
+const bot = new TelegramBot(BOT_TOKEN, { polling: false });
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -101,6 +101,11 @@ function verifyTelegramAuth(req, res, next) {
   }
 }
 
+// ফ্রন্টএন্ড ওপেন করার রুট (Cannot GET / সমস্যার স্থায়ী সমাধান)
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, username, referralId } = req.body;
@@ -133,7 +138,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ১. অ্যাডমিন আইডি দিয়ে ক্রেডিট/স্টার গিফট করার রিকোয়ারমেন্ট
+// ১. অ্যাডমিন প্যানেল থেকে আইডি দিয়ে ক্রেডিট গিফট করার এপিআই
 app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
   try {
     const requesterId = String(req.telegramUser?.id);
@@ -171,7 +176,7 @@ app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ৪. টাস্ক ক্রিয়েট করার সময় কোনো ব্যালেন্স কাটবে না (রিকোয়ারমেন্ট অনুযায়ী)
+// ৪. টাস্ক ক্রিয়েট করার সময় কোনো ক্রেডিট/ব্যালেন্স কাটবে না
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -190,7 +195,6 @@ app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
       platformType,
       socialLink,
       rewardPerTask: reward,
-      budgetBalance: 0, 
       status: 'Active',
       completedCount: 0
     });
@@ -231,7 +235,7 @@ app.get('/api/my-tasks/:telegramId', async (req, res) => {
   }
 });
 
-// ২. ১ বা ২টি টাস্ক দেখানো, কমপ্লিট বা স্কিপ করলে নতুন আসা এবং ক্রিয়েটরের ব্যালেন্স বা বাজেট শেষ হলে ফ্রিজ বা পজ হওয়া
+// ২. সর্বোচ্চ ২টি টাস্ক দেখানো, স্কিপ বা কমপ্লিট করলে নতুন আসা এবং ক্রিয়েটরের ব্যালেন্স না থাকলে ফ্রিজ হওয়া
 app.get('/api/tasks', async (req, res) => {
   try {
     const { platform, telegramId } = req.query;
@@ -251,7 +255,7 @@ app.get('/api/tasks', async (req, res) => {
     for (let t of tasks) {
       let creator = await User.findOne({ telegramId: String(t.creatorTelegramId) });
       
-      // ক্রিয়েটরের ক্রেডিট শেষ হলে বা বাজেট না থাকলে টাস্ক ফ্রিজ/পজ রাখা
+      // ক্রিয়েটরের ব্যালেন্স শেষ হলে টাস্ক ফ্রিজ/পজ রাখা
       if (!creator || creator.balance < t.rewardPerTask) {
         if (t.status === 'Active') {
           t.status = 'Paused';
@@ -276,7 +280,7 @@ app.get('/api/tasks', async (req, res) => {
       }
     }
 
-    // একবারে সর্বোচ্চ ২টি টাস্ক দেখানোর ব্যবস্থা
+    // একবারে সর্বোচ্চ ২টি টাস্ক দেখাবে
     validTasks = validTasks.slice(0, 2); 
     res.json(validTasks);
   } catch (err) {
@@ -338,7 +342,7 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "You have already completed this task!" });
     }
 
-    // ক্রিয়েটরের একাউন্ট থেকে রিওয়ার্ড কেটে নেওয়া এবং ফিনিক্স বা ব্যালেন্স চেক করে ফ্রিজ করা
+    // ক্রিয়েটরের একাউন্ট থেকে রিওয়ার্ড কেটে নেওয়া
     creator.balance -= task.rewardPerTask;
     await creator.save({ session });
 
