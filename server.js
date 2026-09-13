@@ -504,7 +504,6 @@ app.get('/', (req, res) => {
                 <h3 class="section-title" style="margin-top:0;">➕ Add Social Link</h3>
                 <label>Select Platform Type:</label>
                 <select id="platformType">
-                    <!-- পুরনো সার্ভিসসমূহ -->
                     <option value="YouTube Subscribe">YouTube Subscribe</option>
                     <option value="YouTube Video Like">YouTube Video Like</option>
                     <option value="YouTube Video Watch">YouTube Video Watch</option>
@@ -518,8 +517,6 @@ app.get('/', (req, res) => {
                     <option value="TikTok Follower">TikTok Follower</option>
                     <option value="TikTok Video Like">TikTok Video Like</option>
                     <option value="Twitter/X Follower">Twitter/X Follower</option>
-
-                    <!-- নতুন সার্ভিস অপশনসমূহ -->
                     <option value="Website Visit">🌐 Website Visit / Traffic</option>
                     <option value="App Download">📱 App Download & Review</option>
                     <option value="Facebook Share">↗️ Facebook Post Share</option>
@@ -682,14 +679,14 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += `
+                    html += \`
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
-                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">${task.socialLink}</a></p>
-                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +${task.rewardPerTask} Credits</p>
-                            <button class="action-btn" onclick="completeTask('${task._id}', '${task.socialLink}')">Visit & Earn Credits</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
+                            <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="\${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">\${task.socialLink}</a></p>
+                            <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +\${task.rewardPerTask} Credits</p>
+                            <button class="action-btn" onclick="completeTask('\${task._id}', '\${task.socialLink}')">Visit & Earn Credits</button>
                         </div>
-                    `;
+                    \`;
                 });
                 taskListDiv.innerHTML = html;
             }
@@ -706,14 +703,14 @@ app.get('/', (req, res) => {
 
                 let html = '';
                 tasks.forEach(task => {
-                    html += `
+                    html += \`
                         <div class="card" style="border: 1px solid #334155;">
-                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">${task.platformType}</span>
-                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">${task.socialLink}</p>
-                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:${task.status==='Active'?'#22c55e':'#ef4444'}">${task.status}</span> | <strong>Completed:</strong> ${task.completedCount} times</p>
-                            <button class="action-btn" style="background:${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('${task._id}')">${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
+                            <span style="font-size: 11px; background: #334155; padding: 3px 8px; border-radius: 4px; color: #38bdf8; font-weight:bold;">\${task.platformType}</span>
+                            <p style="margin: 8px 0; word-break:break-all; font-size:13px;">\${task.socialLink}</p>
+                            <p style="font-size: 13px;"><strong>Status:</strong> <span style="color:\${task.status==='Active'?'#22c55e':'#ef4444'}">\${task.status}</span> | <strong>Completed:</strong> \${task.completedCount} times</p>
+                            <button class="action-btn" style="background:\${task.status==='Active'?'#ef4444':'#22c55e'}; color:#fff;" onclick="toggleTask('\${task._id}')">\${task.status==='Active'?'Pause Campaign':'Resume Campaign'}</button>
                         </div>
-                    `;
+                    \`;
                 });
                 myTaskListDiv.innerHTML = html;
             }
