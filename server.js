@@ -36,6 +36,7 @@ const UserSchema = new mongoose.Schema({
   starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
+  skippedTasks: { type: Array, default: [] },
   lastDailyBonus: { type: Date, default: null },
   lastTaskTime: { type: Date, default: null }
 });
@@ -46,6 +47,7 @@ const TaskSchema = new mongoose.Schema({
   platformType: String,
   socialLink: String,
   rewardPerTask: { type: Number, min: 10 }, 
+  budgetBalance: { type: Number, default: 0 }, 
   status: { type: String, default: 'Active' },
   completedCount: { type: Number, default: 0 },
   completedUsers: { type: Array, default: [] }
@@ -122,6 +124,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
+// টাস্ক ক্রিয়েট - কোনো ক্রেডিট কাটা হবে না (ফ্রি টাস্ক অ্যাড)
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -135,31 +138,21 @@ app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "Minimum reward per task must be at least 10 credits!" });
     }
 
-    const totalCost = reward * 10; 
-    if (user.balance < totalCost) {
-      return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion! (Min 10 tasks budget required)" });
-    }
-
-    const updatedUser = await User.findOneAndUpdate(
-      { telegramId: String(telegramId), balance: { $gte: totalCost } },
-      { $inc: { balance: -totalCost } },
-      { new: true }
-    );
-
-    if (!updatedUser) {
-      return res.status(400).json({ success: false, message: "Transaction failed due to insufficient balance." });
-    }
+    // এখানে ইউজারের ব্যালেন্স থেকে কোনো ক্রেডিট কাটা হচ্ছে না, ইনফিনিটি বা ডিফল্ট বাজেট হিসেবে সেট করা হলো যাতে লাইভ থাকে
+    const defaultBudget = 10000; // ফ্রি প্রমোশনের জন্য পর্যাপ্ত ভার্চুয়াল বাজেট বা পরিমাপ সেট করা হলো
 
     const newTask = new Task({
       creatorTelegramId: String(telegramId),
       platformType,
       socialLink,
       rewardPerTask: reward,
+      budgetBalance: defaultBudget, 
       status: 'Active',
       completedCount: 0
     });
     await newTask.save();
-    res.json({ success: true, message: "Promotion added successfully!", balance: updatedUser.balance });
+    
+    res.json({ success: true, message: "Promotion added successfully for free!", balance: user.balance });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -192,20 +185,50 @@ app.post('/api/toggle-task', verifyTelegramAuth, async (req, res) => {
   }
 });
 
+// টাস্ক রিট্রিভ - সর্বোচ্চ ২টি টাস্ক এবং কমপ্লিট/স্কিপ করা টাস্ক ফিল্টার করা
 app.get('/api/tasks', async (req, res) => {
   try {
     const { platform, telegramId } = req.query;
-    let query = { status: 'Active' };
+    let query = { status: 'Active', budgetBalance: { $gt: 0 } };
     if (platform && platform !== 'All') {
       query.platformType = { $regex: platform, $options: 'i' };
     }
-    let tasks = await Task.find(query);
     
+    let user = null;
     if (telegramId) {
-      tasks = tasks.filter(t => t.creatorTelegramId !== String(telegramId));
+      user = await User.findOne({ telegramId: String(telegramId) });
     }
 
+    let tasks = await Task.find(query);
+    
+    if (user) {
+      tasks = tasks.filter(t => 
+        t.creatorTelegramId !== String(telegramId) && 
+        !t.completedUsers.includes(String(telegramId)) &&
+        !(user.skippedTasks && user.skippedTasks.includes(String(t._id)))
+      );
+    }
+
+    // একবারে সর্বোচ্চ ২টি টাস্ক দেখানোর নিয়ম
+    tasks = tasks.slice(0, 2);
+
     res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/skip-task', verifyTelegramAuth, async (req, res) => {
+  try {
+    const { telegramId, taskId } = req.body;
+    if (!telegramId || !taskId) return res.status(400).json({ error: "Invalid data" });
+
+    await User.findOneAndUpdate(
+      { telegramId: String(telegramId) },
+      { $addToSet: { skippedTasks: taskId } }
+    );
+
+    res.json({ success: true, message: "Task skipped successfully." });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -220,28 +243,6 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
       await session.abortTransaction();
       session.endSession();
       return res.status(400).json({ error: "Invalid data" });
-    }
-
-    const now = new Date();
-    const fiveSecondsAgo = new Date(now.getTime() - 5000);
-
-    let user = await User.findOneAndUpdate(
-      { 
-        telegramId: String(telegramId), 
-        $or: [
-          { lastTaskTime: { $exists: false } }, 
-          { lastTaskTime: null }, 
-          { lastTaskTime: { $lte: fiveSecondsAgo } }
-        ] 
-      },
-      { $set: { lastTaskTime: now } },
-      { new: true, session }
-    );
-
-    if (!user) {
-      await session.abortTransaction();
-      session.endSession();
-      return res.status(400).json({ success: false, message: "You are completing tasks too fast! Please wait at least 5 seconds." });
     }
 
     let task = await Task.findOne({ _id: taskId, status: 'Active' }).session(session);
@@ -263,11 +264,15 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "You have already completed this task!" });
     }
 
+    const newBudget = task.budgetBalance - task.rewardPerTask;
+    const newStatus = newBudget < task.rewardPerTask ? 'Paused' : 'Active';
+
     const updatedTask = await Task.findOneAndUpdate(
       { _id: taskId, completedUsers: { $ne: String(telegramId) } },
       { 
         $push: { completedUsers: String(telegramId) },
-        $inc: { completedCount: 1 }
+        $inc: { completedCount: 1 },
+        $set: { budgetBalance: newBudget, status: newStatus }
       },
       { new: true, session }
     );
@@ -275,14 +280,15 @@ app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
     if (!updatedTask) {
       await session.abortTransaction();
       session.endSession();
-      return res.status(400).json({ success: false, message: "Task completion failed or already processed!" });
+      return res.status(400).json({ success: false, message: "Task completion failed!" });
     }
 
     const finalUser = await User.findOneAndUpdate(
       { telegramId: String(telegramId) },
       { 
         $inc: { balance: task.rewardPerTask },
-        $push: { completedTasks: taskId }
+        $push: { completedTasks: taskId },
+        $addToSet: { skippedTasks: taskId } 
       },
       { new: true, session }
     );
@@ -321,6 +327,40 @@ app.post('/api/daily-bonus', verifyTelegramAuth, async (req, res) => {
     res.json({ success: true, message: "Successfully claimed 10 Daily Bonus credits!", balance: user.balance });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/reward', async (req, res) => {
+  try {
+    const { adminId, targetUserId, amount, type } = req.body; 
+    if (String(adminId) !== String(ADMIN_ID)) {
+      return res.status(403).json({ success: false, error: "Unauthorized: Admin access only!" });
+    }
+
+    const numAmount = Number(amount);
+    if (isNaN(numAmount) || numAmount <= 0) {
+      return res.status(400).json({ success: false, error: "Invalid reward amount!" });
+    }
+
+    let updateField = type === 'starBalance' ? { $inc: { starBalance: numAmount } } : { $inc: { balance: numAmount } };
+    
+    let targetUser = await User.findOneAndUpdate(
+      { telegramId: String(targetUserId) },
+      updateField,
+      { new: true }
+    );
+
+    if (!targetUser) {
+      return res.status(404).json({ success: false, error: "Target user not found in database!" });
+    }
+
+    try {
+      await bot.sendMessage(targetUserId, `🎁 Congratulations! Admin rewarded you with ${numAmount} ${type === 'starBalance' ? 'Stars' : 'Credits'}.`);
+    } catch(e) {}
+
+    res.json({ success: true, message: `Successfully rewarded ${numAmount} to user ${targetUserId}!` });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 
@@ -430,6 +470,7 @@ app.get('/', (req, res) => {
 
             .card { background: #1e293b; padding: 15px; border-radius: 12px; margin-bottom: 12px; text-align: left; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
             button.action-btn { background: #38bdf8; color: #0f172a; border: none; padding: 10px; font-size: 14px; border-radius: 6px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 5px; }
+            button.skip-btn { background: #475569; color: #fff; border: none; padding: 8px; font-size: 13px; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 5px; }
             input, select { width: 100%; padding: 10px; margin: 6px 0 12px 0; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; box-sizing: border-box; font-size: 14px; }
             .section-title { color: #38bdf8; margin-top: 15px; text-align: left; font-size: 16px; }
             .tab-content { display: none; }
@@ -470,10 +511,11 @@ app.get('/', (req, res) => {
             <button class="menu-item" onclick="switchTab('bonus'); toggleMenu()">🏆 Daily Free Bonus</button>
             <button class="menu-item" onclick="switchTab('buy'); toggleMenu()">🛒 Buy Credits (Stars)</button>
             <button class="menu-item" onclick="switchTab('profile'); toggleMenu()">👤 Profile & Withdraw</button>
+            <button class="menu-item" id="adminMenuBtn" style="display:none; background:#b91c1c; color:#fff;" onclick="switchTab('admin'); toggleMenu()">🛡️ Admin Reward Panel</button>
         </div>
 
         <div id="earnTab" class="tab-content active">
-            <h3 class="section-title" style="margin-top:0;">🎯 Select Category to Earn</h3>
+            <h3 class="section-title" style="margin-top:0;">🎯 Select Category to Earn (Max 2 Tasks)</h3>
             <div class="cat-grid">
                 <button class="cat-btn active" onclick="filterTasks('All', this)">🌐 All Networks</button>
                 <button class="cat-btn" onclick="filterTasks('YouTube', this)">▶️ YouTube</button>
@@ -501,7 +543,7 @@ app.get('/', (req, res) => {
 
         <div id="postTab" class="tab-content">
             <div class="card">
-                <h3 class="section-title" style="margin-top:0;">➕ Add Social Link</h3>
+                <h3 class="section-title" style="margin-top:0;">➕ Add Social Link (Free)</h3>
                 <label>Select Platform Type:</label>
                 <select id="platformType">
                     <option value="Telegram Post View">Telegram Post View</option>
@@ -522,8 +564,8 @@ app.get('/', (req, res) => {
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
                 <label>Credits Per Task Reward (Min 10):</label>
                 <input type="number" id="rewardPerTask" min="10" placeholder="e.g. 10">
-                <p style="font-size:11px; color:#94a3b8;">Note: 10x reward credits will be deducted instantly as minimum budget for 10 engagements.</p>
-                <button class="action-btn" onclick="createTask()">Add Link & Start Promotion</button>
+                <p style="font-size:11px; color:#22c55e;">Note: Adding tasks is completely FREE! No credits will be deducted.</p>
+                <button class="action-btn" onclick="createTask()">Add Link & Start Promotion (Free)</button>
             </div>
         </div>
 
@@ -535,7 +577,7 @@ app.get('/', (req, res) => {
         <div id="bonusTab" class="tab-content">
             <div class="card" style="text-align: center;">
                 <h3 class="section-title" style="margin-top:0; text-align: center;">🏆 Daily Free Bonus</h3>
-                <p style="font-size: 13px; color: #94a3b8;">Claim your free 10 credits every 24 hours to promote your pages!</p>
+                <p style="font-size: 13px; color: #94a3b8;">Claim your free 10 credits every 24 hours!</p>
                 <button class="action-btn" style="background:#22c55e; color:#fff;" onclick="claimDailyBonus()">Claim Daily Bonus (+10 Crd)</button>
             </div>
         </div>
@@ -580,6 +622,22 @@ app.get('/', (req, res) => {
             </div>
         </div>
 
+        <div id="adminTab" class="tab-content">
+            <div class="card" style="border: 1px solid #b91c1c;">
+                <h3 class="section-title" style="margin-top:0; color:#ef4444;">🛡️ Admin Reward Panel</h3>
+                <label>Target User Telegram ID:</label>
+                <input type="text" id="adminTargetId" placeholder="Enter user telegram id">
+                <label>Reward Type:</label>
+                <select id="adminRewardType">
+                    <option value="balance">Credits (Crd)</option>
+                    <option value="starBalance">Stars (Str)</option>
+                </select>
+                <label>Amount:</label>
+                <input type="number" id="adminRewardAmount" placeholder="e.g. 100">
+                <button class="action-btn" style="background:#ef4444; color:#fff;" onclick="adminRewardUser()">Send Reward to User</button>
+            </div>
+        </div>
+
         <script>
             const tg = window.Telegram.WebApp;
             tg.expand();
@@ -589,6 +647,7 @@ app.get('/', (req, res) => {
             const urlParams = new URLSearchParams(window.location.search);
             const referralId = urlParams.get('start') || null;
             let currentPlatform = 'All';
+            const ADMIN_TELEGRAM_ID = "${ADMIN_ID}";
 
             async function secureFetch(url, options = {}) {
                 options.headers = options.headers || {};
@@ -621,6 +680,10 @@ app.get('/', (req, res) => {
                     document.getElementById('pBalance').innerText = data.balance;
                     document.getElementById('pStarBalance').innerText = data.starBalance;
                     
+                    if(String(user.id) === String(ADMIN_TELEGRAM_ID)) {
+                        document.getElementById('adminMenuBtn').style.display = 'block';
+                    }
+
                     const botUsername = "${BOT_USERNAME}"; 
                     document.getElementById('refLink').value = 'https://t.me/' + botUsername + '?start=' + user.id;
 
@@ -653,7 +716,7 @@ app.get('/', (req, res) => {
                 });
                 const data = await res.json();
                 if(data.success) {
-                    alert("Promotion added successfully!");
+                    alert("Promotion added successfully for free!");
                     document.getElementById('socialLink').value = '';
                     document.getElementById('rewardPerTask').value = '';
                     initApp();
@@ -681,10 +744,19 @@ app.get('/', (req, res) => {
                             <p style="margin: 8px 0; font-size: 13px;"><strong>Link:</strong> <a href="\${task.socialLink}" target="_blank" style="color: #38bdf8; word-break:break-all;">\${task.socialLink}</a></p>
                             <p style="margin: 0 0 10px 0; font-size: 13px;"><strong>Reward:</strong> +\${task.rewardPerTask} Credits</p>
                             <button class="action-btn" onclick="completeTask('\${task._id}', '\${task.socialLink}')">Visit & Earn Credits</button>
+                            <button class="skip-btn" onclick="skipTask('\${task._id}')">⏭️ Skip Task</button>
                         </div>
                     \`;
                 });
                 taskListDiv.innerHTML = html;
+            }
+
+            async function skipTask(taskId) {
+                await secureFetch('/api/skip-task', {
+                    method: 'POST',
+                    body: JSON.stringify({ telegramId: String(user.id), taskId })
+                });
+                loadTasks(currentPlatform);
             }
 
             async function loadMyTasks() {
@@ -712,10 +784,14 @@ app.get('/', (req, res) => {
             }
 
             async function toggleTask(taskId) {
-                await secureFetch('/api/toggle-task', {
+                const res = await secureFetch('/api/toggle-task', {
                     method: 'POST',
                     body: JSON.stringify({ taskId, telegramId: String(user.id) })
                 });
+                const data = await res.json();
+                if(!data.success) {
+                    alert(data.message || "Failed to toggle status.");
+                }
                 loadMyTasks();
             }
 
@@ -732,6 +808,7 @@ app.get('/', (req, res) => {
                     initApp();
                 } else {
                     alert(data.message || data.error);
+                    loadTasks(currentPlatform);
                 }
             }
 
@@ -785,6 +862,31 @@ app.get('/', (req, res) => {
                     initApp();
                 } else {
                     alert(data.message || data.error);
+                }
+            }
+
+            async function adminRewardUser() {
+                const targetUserId = document.getElementById('adminTargetId').value;
+                const type = document.getElementById('adminRewardType').value;
+                const amount = document.getElementById('adminRewardAmount').value;
+
+                if(!targetUserId || !amount) {
+                    alert("Please fill in user ID and amount!");
+                    return;
+                }
+
+                const res = await fetch('/api/admin/reward', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ adminId: String(user.id), targetUserId, amount, type })
+                });
+                const data = await res.json();
+                if(data.success) {
+                    alert(data.message);
+                    document.getElementById('adminTargetId').value = '';
+                    document.getElementById('adminRewardAmount').value = '';
+                } else {
+                    alert(data.error || "Failed to reward user.");
                 }
             }
         </script>
