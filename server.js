@@ -3,51 +3,59 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
 const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+const rateLimit = require('express-rate-limit');
+require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// --- আপনার চূড়ান্ত কনফিগারেশনসমূহ ---
-const BOT_TOKEN = "8801531798:AAEw7SJhnT1T8x69caPgMncjI6IPBAgWN3Q";
-const MONGO_URI = "mongodb+srv://torikul570:Nadira1432@cluster0.m5iatns.mongodb.net/?appName=Cluster0";
-const ADMIN_ID = "8351272061"; // আপনার টেলিগ্রাম আইডি
+// --- কনফিগারেশনসমূহ (.env থেকে লোড হবে) ---
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const MONGO_URI = process.env.MONGO_URI;
+const ADMIN_ID = process.env.ADMIN_ID; 
+const BOT_USERNAME = process.env.BOT_USERNAME; 
+const EMAIL_USER = process.env.EMAIL_USER; 
+const EMAIL_PASS = process.env.EMAIL_PASS; 
 
-const EMAIL_USER = "torikul570islam@gmail.com"; 
-const EMAIL_PASS = "zkqr kaxy cksu ksbr"; // আপনার জিমেইলের অ্যাপ পাসওয়ার্ড
+// ১. রেট লিমিটার
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, 
+  max: 100, 
+  message: { error: "Too many requests from this IP, please try again later." }
+});
+app.use('/api/', apiLimiter);
 
-// ১. MongoDB কানেকশন
-mongoose.connect(MONGO_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
+// ২. MongoDB কানেকশন
+mongoose.connect(MONGO_URI)
 .then(() => console.log('✅ MongoDB Connected Successfully'))
 .catch((err) => console.error('❌ MongoDB Connection Error:', err));
 
-// ২. ডাটাবেজ স্কিমা
+// ৩. ডাটাবেজ স্কিমা
 const UserSchema = new mongoose.Schema({
-  telegramId: { type: String, required: true, unique: true },
+  telegramId: { type: String, required: true, unique: true, index: true },
   username: String,
-  balance: { type: Number, default: 100 },         
-  starBalance: { type: Number, default: 0 },     
+  balance: { type: Number, default: 100, min: 0 },         
+  starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
-  lastDailyBonus: { type: Date, default: null }
+  lastDailyBonus: { type: Date, default: null },
+  lastTaskTime: { type: Date, default: null }
 });
 const User = mongoose.model('User', UserSchema);
 
 const TaskSchema = new mongoose.Schema({
-  creatorTelegramId: String,
+  creatorTelegramId: { type: String, index: true },
   platformType: String,
   socialLink: String,
-  rewardPerTask: Number,
+  rewardPerTask: { type: Number, min: 1 },
   status: { type: String, default: 'Active' },
   completedCount: { type: Number, default: 0 },
   completedUsers: { type: Array, default: [] }
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// টেলিগ্রাম বট ও জিমেইল ইনিশিয়ালাইজ
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
 const transporter = nodemailer.createTransport({
@@ -58,18 +66,56 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// ৩. ইউজার রেজিস্ট্রেশন ও রেফারেল কমিশন হ্যান্ডলিং
-app.post('/api/user', async (req, res) => {
+// ৪. ফিক্সড টেলিগ্রাম ডাটা ভ্যালিডেশন মিডলওয়্যার (কোনো বাইপাস নেই)
+function verifyTelegramAuth(req, res, next) {
+  const initData = req.headers['x-telegram-init-data'];
+  if (!initData) {
+    return res.status(401).json({ error: "Unauthorized: No Telegram WebApp init-data provided!" });
+  }
+
+  try {
+    const urlParams = new URLSearchParams(initData);
+    const hash = urlParams.get('hash');
+    urlParams.delete('hash');
+    
+    const dataCheckString = Array.from(urlParams.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, val]) => `${key}=${val}`)
+      .join('\n');
+
+    const secretKey = crypto.createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest();
+    const calculatedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+    if (calculatedHash !== hash) {
+      return res.status(401).json({ error: "Unauthorized: Telegram WebApp hash verification failed!" });
+    }
+    next();
+  } catch (e) {
+    return res.status(401).json({ error: "Authentication failed!" });
+  }
+}
+
+// ৫. ইউজার রেজিস্ট্রেশন ও সেলফ-রেফারেল ফিক্স
+app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, username, referralId } = req.body;
-    let user = await User.findOne({ telegramId });
+    if (!telegramId) return res.status(400).json({ error: "Invalid Telegram ID" });
+
+    let user = await User.findOne({ telegramId: String(telegramId) });
     
     if (!user) {
-      user = new User({ telegramId, username, balance: 100, referredBy: referralId || null });
+      const validReferral = (referralId && referralId !== String(telegramId)) ? referralId : null;
+
+      user = new User({ 
+        telegramId: String(telegramId), 
+        username: username || 'Unknown', 
+        balance: 100, 
+        referredBy: validReferral 
+      });
       await user.save();
 
-      if (referralId && referralId !== telegramId) {
-        let referrer = await User.findOne({ telegramId: referralId });
+      if (validReferral) {
+        let referrer = await User.findOne({ telegramId: validReferral });
         if (referrer) {
           referrer.balance += 50;
           await referrer.save();
@@ -82,51 +128,68 @@ app.post('/api/user', async (req, res) => {
   }
 });
 
-// ৪. নতুন টাস্ক বা প্রমোশন পেজ ক্রিয়েট করার এপিআই
-app.post('/api/create-task', async (req, res) => {
+// ৬. প্রমোশন ক্রিয়েট
+app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
-    let user = await User.findOne({ telegramId });
+    if (!telegramId || !socialLink) return res.status(400).json({ error: "Invalid data" });
+
+    let user = await User.findOne({ telegramId: String(telegramId) });
     if (!user) return res.status(404).json({ error: "User not found" });
 
-    const totalCost = Number(rewardPerTask) * 10; 
+    const reward = Number(rewardPerTask);
+    if (isNaN(reward) || reward <= 0) {
+      return res.status(400).json({ success: false, message: "Reward per task must be greater than 0!" });
+    }
+
+    const totalCost = reward * 10; 
     if (user.balance < totalCost) {
       return res.status(400).json({ success: false, message: "Insufficient credit balance to launch promotion!" });
     }
 
-    user.balance -= totalCost;
-    await user.save();
+    const updatedUser = await User.findOneAndUpdate(
+      { telegramId: String(telegramId), balance: { $gte: totalCost } },
+      { $inc: { balance: -totalCost } },
+      { new: true }
+    );
+
+    if (!updatedUser) {
+      return res.status(400).json({ success: false, message: "Transaction failed due to insufficient balance." });
+    }
 
     const newTask = new Task({
-      creatorTelegramId: telegramId,
+      creatorTelegramId: String(telegramId),
       platformType,
       socialLink,
-      rewardPerTask: Number(rewardPerTask),
+      rewardPerTask: reward,
       status: 'Active',
       completedCount: 0
     });
     await newTask.save();
-    res.json({ success: true, message: "Promotion added successfully!", balance: user.balance });
+    res.json({ success: true, message: "Promotion added successfully!", balance: updatedUser.balance });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ৫. ইউজারের নিজের পেজ ম্যানেজ করার এপিআই
 app.get('/api/my-tasks/:telegramId', async (req, res) => {
   try {
-    const tasks = await Task.find({ creatorTelegramId: req.params.telegramId });
+    const tasks = await Task.find({ creatorTelegramId: String(req.params.telegramId) });
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/toggle-task', async (req, res) => {
+app.post('/api/toggle-task', verifyTelegramAuth, async (req, res) => {
   try {
-    const { taskId } = req.body;
+    const { taskId, telegramId } = req.body;
     let task = await Task.findById(taskId);
     if (!task) return res.status(404).json({ error: "Task not found" });
+
+    if (task.creatorTelegramId !== String(telegramId)) {
+      return res.status(403).json({ error: "Unauthorized action" });
+    }
 
     task.status = task.status === 'Active' ? 'Paused' : 'Active';
     await task.save();
@@ -136,60 +199,127 @@ app.post('/api/toggle-task', async (req, res) => {
   }
 });
 
-// ৬. সমস্ত একটিভ টাস্ক দেখার এপিআই (ফিল্টারিং সহ)
 app.get('/api/tasks', async (req, res) => {
   try {
-    const { platform } = req.query;
+    const { platform, telegramId } = req.query;
     let query = { status: 'Active' };
     if (platform && platform !== 'All') {
       query.platformType = { $regex: platform, $options: 'i' };
     }
-    const tasks = await Task.find(query);
+    let tasks = await Task.find(query);
+    
+    if (telegramId) {
+      tasks = tasks.filter(t => t.creatorTelegramId !== String(telegramId));
+    }
+
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ৭. টাস্ক কমপ্লিট করে আর্নিং যোগ করা
-app.post('/api/complete-task', async (req, res) => {
+// ৯. শতভাগ সুরক্ষিত ও এটমিক টাস্ক কমপ্লিট API (5-second time lock fix)
+app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
     const { telegramId, taskId } = req.body;
-    let user = await User.findOne({ telegramId });
-    let task = await Task.findById(taskId);
+    if (!telegramId || !taskId) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: "Invalid data" });
+    }
 
-    if (!user || !task) return res.status(404).json({ error: "User or Task not found" });
-    if (task.completedUsers.includes(telegramId)) {
+    const now = new Date();
+    const fiveSecondsAgo = new Date(now.getTime() - 5000);
+
+    let user = await User.findOneAndUpdate(
+      { 
+        telegramId: String(telegramId), 
+        $or: [
+          { lastTaskTime: { $exists: false } }, 
+          { lastTaskTime: null }, 
+          { lastTaskTime: { $lte: fiveSecondsAgo } }
+        ] 
+      },
+      { $set: { lastTaskTime: now } },
+      { new: true, session }
+    );
+
+    if (!user) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, message: "You are completing tasks too fast! Please wait at least 5 seconds." });
+    }
+
+    let task = await Task.findOne({ _id: taskId, status: 'Active' }).session(session);
+    if (!task) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: "Task not found or inactive" });
+    }
+    
+    if (task.creatorTelegramId === String(telegramId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, message: "You cannot complete your own task!" });
+    }
+
+    if (task.completedUsers.includes(String(telegramId))) {
+      await session.abortTransaction();
+      session.endSession();
       return res.status(400).json({ success: false, message: "You have already completed this task!" });
     }
 
-    user.balance += task.rewardPerTask;
-    user.completedTasks.push(taskId);
-    await user.save();
+    const updatedTask = await Task.findOneAndUpdate(
+      { _id: taskId, completedUsers: { $ne: String(telegramId) } },
+      { 
+        $push: { completedUsers: String(telegramId) },
+        $inc: { completedCount: 1 }
+      },
+      { new: true, session }
+    );
 
-    task.completedCount += 1;
-    task.completedUsers.push(telegramId);
-    await task.save();
+    if (!updatedTask) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, message: "Task completion failed or already processed!" });
+    }
 
-    res.json({ success: true, balance: user.balance });
+    const finalUser = await User.findOneAndUpdate(
+      { telegramId: String(telegramId) },
+      { 
+        $inc: { balance: task.rewardPerTask },
+        $push: { completedTasks: taskId }
+      },
+      { new: true, session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({ success: true, balance: finalUser.balance });
   } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
     res.status(500).json({ error: err.message });
   }
 });
 
-// ৮. ডেইলি বোনাস ক্লেম এপিআই (প্রতি ২৪ ঘণ্টায় ১০০ ক্রেডিট ফ্রি)
-app.post('/api/daily-bonus', async (req, res) => {
+// ১০. ডেইলি বোনাস
+app.post('/api/daily-bonus', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId } = req.body;
-    let user = await User.findOne({ telegramId });
+    let user = await User.findOne({ telegramId: String(telegramId) });
     if (!user) return res.status(404).json({ error: "User not found" });
 
     const now = new Date();
     if (user.lastDailyBonus) {
-      const diffTime = Math.abs(now - new Date(user.lastDailyBonus));
+      const diffTime = now - new Date(user.lastDailyBonus);
       const diffHours = diffTime / (1000 * 60 * 60);
       if (diffHours < 24) {
-        return res.status(400).json({ success: false, message: "You can claim daily bonus only once every 24 hours!" });
+        const remainingHours = Math.ceil(24 - diffHours);
+        return res.status(400).json({ success: false, message: `You can claim daily bonus after ${remainingHours} hours!` });
       }
     }
 
@@ -203,34 +333,37 @@ app.post('/api/daily-bonus', async (req, res) => {
   }
 });
 
-// ৯. বিকাশ/নগদ উইথড্র রিকোয়েস্ট
-app.post('/api/withdraw', async (req, res) => {
+// ১১. উইথড্র রিকোয়েস্ট
+app.post('/api/withdraw', verifyTelegramAuth, async (req, res) => {
   const { telegramId, username, starAmount, paymentMethod, accountNo } = req.body;
 
   try {
-    let user = await User.findOne({ telegramId });
-    if (!user || user.starBalance < starAmount) {
-      return res.status(400).json({ success: false, message: "Insufficient star balance!" });
-    }
-
-    if (starAmount < 500) {
+    const amount = Number(starAmount);
+    if (isNaN(amount) || amount < 500) {
       return res.status(400).json({ success: false, message: "Minimum withdraw limit is 500 Stars!" });
     }
 
-    user.starBalance -= starAmount;
-    await user.save();
+    const user = await User.findOneAndUpdate(
+      { telegramId: String(telegramId), starBalance: { $gte: amount } },
+      { $inc: { starBalance: -amount } },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(400).json({ success: false, message: "Insufficient star balance or invalid user!" });
+    }
 
     try {
       const mailOptions = {
         from: EMAIL_USER,
         to: EMAIL_USER,
         subject: `🚨 New Withdraw Request (${paymentMethod})`,
-        text: `User ID: ${telegramId}\nUsername: @${username}\nStars to Pay: ${starAmount}\nMethod: ${paymentMethod}\nAccount No: ${accountNo}`,
+        text: `User ID: ${telegramId}\nUsername: @${username}\nStars to Pay: ${amount}\nMethod: ${paymentMethod}\nAccount No: ${accountNo}`,
       };
       await transporter.sendMail(mailOptions);
     } catch(e) { console.log("Email error:", e); }
 
-    const adminMessage = `🚨 *New Withdraw Request!*\n\n👤 *User:* @${username || 'N/A'}\n🆔 *ID:* \`${telegramId}\`\n⭐ *Amount:* ${starAmount} Stars\n💳 *Method:* ${paymentMethod}\n📱 *Account:* \`${accountNo}\``;
+    const adminMessage = `🚨 *New Withdraw Request!*\n\n👤 *User:* @${username || 'N/A'}\n🆔 *ID:* \`${telegramId}\`\n⭐ *Amount:* ${amount} Stars\n💳 *Method:* ${paymentMethod}\n📱 *Account:* \`${accountNo}\``;
     await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
 
     res.status(200).json({ success: true, message: "Withdraw request submitted successfully!", starBalance: user.starBalance });
@@ -240,11 +373,11 @@ app.post('/api/withdraw', async (req, res) => {
   }
 });
 
-// ১০. টেলিগ্রাম স্টারস পেমেন্ট ইনভয়েস
-app.post('/api/send-invoice', async (req, res) => {
+// ১২. টেলিগ্রাম স্টারস পেমেন্ট
+app.post('/api/send-invoice', verifyTelegramAuth, async (req, res) => {
   const { chatId, amount, telegramId } = req.body;
   try {
-    const prices = [{ label: 'Buy Credits/Stars', amount: amount || 100 }];
+    const prices = [{ label: 'Buy Credits/Stars', amount: Number(amount) || 100 }];
     await bot.sendInvoice(
       chatId,
       'Buy Package',
@@ -272,16 +405,18 @@ bot.on('message', async (msg) => {
   if (msg.successful_payment) {
     const chatId = msg.chat.id;
     const totalStars = msg.successful_payment.total_amount;
-    let user = await User.findOne({ telegramId: String(chatId) });
+    let user = await User.findOneAndUpdate(
+      { telegramId: String(chatId) },
+      { $inc: { starBalance: totalStars } },
+      { new: true }
+    );
     if (user) {
-      user.starBalance += totalStars;
-      await user.save();
+      await bot.sendMessage(chatId, `🎉 Payment of ${totalStars} Stars successful! Star balance updated.`);
     }
-    await bot.sendMessage(chatId, `🎉 Payment of ${totalStars} Stars successful! Star balance updated.`);
   }
 });
 
-// ১১. ফ্রন্টএন্ড UI
+// ১৩. ফ্রন্টএন্ড UI
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -289,7 +424,7 @@ app.get('/', (req, res) => {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Like4Like Social Exchange</title>
+        <title>Sub4Sub Social Exchange</title>
         <script src="https://telegram.org/js/telegram-web-app.js"></script>
         <style>
             body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #fff; margin: 0; padding: 12px; text-align: center; }
@@ -320,7 +455,7 @@ app.get('/', (req, res) => {
     <body>
         <div class="header">
             <div class="header-info">
-                <h3 style="margin:0 0 2px 0; font-size:15px;">🔥 Like4Like Exchange</h3>
+                <h3 style="margin:0 0 2px 0; font-size:15px;">🔥 Sub4Sub Exchange</h3>
                 <span class="balance">🪙 <span id="userBalance">0</span> Crd</span> | <span style="color:#22c55e; font-size:13px;">⭐ <span id="userStarBalance">0</span> Str</span>
             </div>
             <button class="menu-btn" onclick="toggleMenu()">⋮</button>
@@ -369,8 +504,8 @@ app.get('/', (req, res) => {
                 </select>
                 <label>Social Link / URL:</label>
                 <input type="text" id="socialLink" placeholder="https://youtube.com/@yourchannel">
-                <label>Credits Per Task Reward:</label>
-                <input type="number" id="rewardPerTask" placeholder="e.g. 5">
+                <label>Credits Per Task Reward (Min 1):</label>
+                <input type="number" id="rewardPerTask" min="1" placeholder="e.g. 5">
                 <p style="font-size:11px; color:#94a3b8;">Note: 10x reward credits will be deducted instantly from your balance as total budget.</p>
                 <button class="action-btn" onclick="createTask()">Add Link & Start Promotion</button>
             </div>
@@ -434,9 +569,17 @@ app.get('/', (req, res) => {
             tg.expand();
 
             const user = tg.initDataUnsafe?.user || { id: "test_user_123", username: "testuser" };
+            const initData = tg.initData || "";
             const urlParams = new URLSearchParams(window.location.search);
             const referralId = urlParams.get('start') || null;
             let currentPlatform = 'All';
+
+            async function secureFetch(url, options = {}) {
+                options.headers = options.headers || {};
+                options.headers['Content-Type'] = 'application/json';
+                options.headers['x-telegram-init-data'] = initData;
+                return fetch(url, options);
+            }
 
             function toggleMenu() {
                 document.getElementById('sideMenu').classList.toggle('open');
@@ -449,9 +592,8 @@ app.get('/', (req, res) => {
 
             async function initApp() {
                 try {
-                    const res = await fetch('/api/user', {
+                    const res = await secureFetch('/api/user', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ telegramId: String(user.id), username: user.username, referralId })
                     });
                     const data = await res.json();
@@ -463,7 +605,7 @@ app.get('/', (req, res) => {
                     document.getElementById('pBalance').innerText = data.balance;
                     document.getElementById('pStarBalance').innerText = data.starBalance;
                     
-                    const botUsername = "YourBotUsername"; 
+                    const botUsername = "${BOT_USERNAME}"; 
                     document.getElementById('refLink').value = 'https://t.me/' + botUsername + '?start=' + user.id;
 
                     loadTasks(currentPlatform);
@@ -484,14 +626,13 @@ app.get('/', (req, res) => {
                 const socialLink = document.getElementById('socialLink').value;
                 const rewardPerTask = document.getElementById('rewardPerTask').value;
 
-                if(!socialLink || !rewardPerTask) {
-                    alert("Please fill all fields!");
+                if(!socialLink || !rewardPerTask || Number(rewardPerTask) <= 0) {
+                    alert("Please fill all fields with valid numbers!");
                     return;
                 }
 
-                const res = await fetch('/api/create-task', {
+                const res = await secureFetch('/api/create-task', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ telegramId: String(user.id), platformType, socialLink, rewardPerTask })
                 });
                 const data = await res.json();
@@ -507,7 +648,7 @@ app.get('/', (req, res) => {
             }
 
             async function loadTasks(platform = 'All') {
-                const res = await fetch('/api/tasks?platform=' + encodeURIComponent(platform));
+                const res = await fetch('/api/tasks?platform=' + encodeURIComponent(platform) + '&telegramId=' + user.id);
                 const tasks = await res.json();
                 const taskListDiv = document.getElementById('taskList');
                 
@@ -555,10 +696,9 @@ app.get('/', (req, res) => {
             }
 
             async function toggleTask(taskId) {
-                await fetch('/api/toggle-task', {
+                await secureFetch('/api/toggle-task', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ taskId })
+                    body: JSON.stringify({ taskId, telegramId: String(user.id) })
                 });
                 loadMyTasks();
             }
@@ -566,9 +706,8 @@ app.get('/', (req, res) => {
             async function completeTask(taskId, socialLink) {
                 window.open(socialLink, '_blank');
 
-                const res = await fetch('/api/complete-task', {
+                const res = await secureFetch('/api/complete-task', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ telegramId: String(user.id), taskId })
                 });
                 const data = await res.json();
@@ -576,14 +715,13 @@ app.get('/', (req, res) => {
                     alert("Task completed successfully! Credits added.");
                     initApp();
                 } else {
-                    alert(data.message);
+                    alert(data.message || "Error completing task!");
                 }
             }
 
             async function claimDailyBonus() {
-                const res = await fetch('/api/daily-bonus', {
+                const res = await secureFetch('/api/daily-bonus', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ telegramId: String(user.id) })
                 });
                 const data = await res.json();
@@ -593,9 +731,8 @@ app.get('/', (req, res) => {
 
             async function buyStarsInvoice() {
                 const amount = Number(document.getElementById('starPackage').value);
-                const res = await fetch('/api/send-invoice', {
+                const res = await secureFetch('/api/send-invoice', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chatId: user.id, amount, telegramId: user.id })
                 });
                 const data = await res.json();
@@ -609,14 +746,13 @@ app.get('/', (req, res) => {
                 const accountNo = document.getElementById('accountNo').value;
                 const starAmount = Number(document.getElementById('starAmount').value);
 
-                if(!accountNo || !starAmount) {
-                    alert("Please fill all fields!");
+                if(!accountNo || !starAmount || starAmount < 500) {
+                    alert("Please fill all fields correctly (Min withdraw 500 Stars)!");
                     return;
                 }
 
-                const res = await fetch('/api/withdraw', {
+                const res = await secureFetch('/api/withdraw', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ telegramId: String(user.id), username: user.username, starAmount, paymentMethod, accountNo })
                 });
                 const data = await res.json();
@@ -633,5 +769,5 @@ app.get('/', (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server is running on port ${PORT}`);
+  console.log(`🚀 Fully Atomic & Secured Server is running on port ${PORT}`);
 });
