@@ -12,8 +12,8 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// আপনার মূল কোডের স্ট্যাটিক ফোল্ডার ও রুট পাথ (যাতে Cannot GET / না আসে)
-app.use(express.static('public'));
+// আপনার আগের রানিং কোডের স্ট্যাটিক ফোল্ডার ও রুট (যাতে মিনি অ্যাপ হুবহু আগের মতো ওপেন হয়)
+app.use(express.static(path.join(__dirname, 'public')));
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const MONGO_URI = process.env.MONGO_URI;
@@ -40,7 +40,7 @@ const UserSchema = new mongoose.Schema({
   starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
-  skippedTasks: { type: Array, default: [] }, 
+  skippedTasks: { type: Array, default: [] }, // স্কিপ করা টাস্ক ট্র্যাক করার জন্য
   lastDailyBonus: { type: Date, default: null },
   lastTaskTime: { type: Date, default: null }
 });
@@ -101,11 +101,6 @@ function verifyTelegramAuth(req, res, next) {
   }
 }
 
-// ফ্রন্টএন্ড ওপেন করার রুট (Cannot GET / সমস্যার স্থায়ী সমাধান)
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
-
 app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, username, referralId } = req.body;
@@ -138,7 +133,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ১. অ্যাডমিন প্যানেল থেকে আইডি দিয়ে ক্রেডিট গিফট করার এপিআই
+// ১. অ্যাডমিন আইডি দিয়ে ইউজারকে ক্রেডিট গিফট করার এপিআই
 app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
   try {
     const requesterId = String(req.telegramUser?.id);
@@ -176,7 +171,7 @@ app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// ৪. টাস্ক ক্রিয়েট করার সময় কোনো ক্রেডিট/ব্যালেন্স কাটবে না
+// ৩. টাস্ক ক্রিয়েট করার সময় কোনো ক্রেডিট/ব্যালেন্স কাটবে না
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -235,7 +230,7 @@ app.get('/api/my-tasks/:telegramId', async (req, res) => {
   }
 });
 
-// ২. সর্বোচ্চ ২টি টাস্ক দেখানো, স্কিপ বা কমপ্লিট করলে নতুন আসা এবং ক্রিয়েটরের ব্যালেন্স না থাকলে ফ্রিজ হওয়া
+// ২. ১ বা ২টি টাস্ক দেখানো, কমপ্লিট বা স্কিপ করলে নতুন আসা এবং ক্রিয়েটরের ব্যালেন্স না থাকলে ফ্রিজ হওয়া
 app.get('/api/tasks', async (req, res) => {
   try {
     const { platform, telegramId } = req.query;
@@ -255,7 +250,7 @@ app.get('/api/tasks', async (req, res) => {
     for (let t of tasks) {
       let creator = await User.findOne({ telegramId: String(t.creatorTelegramId) });
       
-      // ক্রিয়েটরের ব্যালেন্স শেষ হলে টাস্ক ফ্রিজ/পজ রাখা
+      // ক্রিয়েটরের ব্যালেন্স শেষ হলে টাস্ক ফ্রিজ বা পজ রাখা
       if (!creator || creator.balance < t.rewardPerTask) {
         if (t.status === 'Active') {
           t.status = 'Paused';
@@ -280,7 +275,7 @@ app.get('/api/tasks', async (req, res) => {
       }
     }
 
-    // একবারে সর্বোচ্চ ২টি টাস্ক দেখাবে
+    // একবারে সর্বোচ্চ ২টি টাস্ক দেখানোর ব্যবস্থা
     validTasks = validTasks.slice(0, 2); 
     res.json(validTasks);
   } catch (err) {
