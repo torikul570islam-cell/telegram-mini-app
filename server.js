@@ -5,13 +5,14 @@ const TelegramBot = require('node-telegram-bot-api');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-// ফ্রন্টএন্ড স্ট্যাটিক ফাইল সার্ভ করার জন্য (মিনি অ্যাপ ইন্টারফেস দেখানোর জন্য)
+// ফ্রন্টএন্ড ফাইল যদি public ফোল্ডারে থাকে
 app.use(express.static('public'));
 
 const BOT_TOKEN = process.env.BOT_TOKEN || '';
@@ -57,7 +58,6 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// Safe Bot Initialization to prevent deploy crash
 let bot = null;
 if (BOT_TOKEN) {
   bot = new TelegramBot(BOT_TOKEN, { polling: false });
@@ -104,6 +104,11 @@ function verifyTelegramAuth(req, res, next) {
     return res.status(401).json({ error: "Authentication failed!" });
   }
 }
+
+// হোম পেজ রুট: যদি index.html ফাইলটি মূল ফোল্ডারে থাকে তবে সরাসরি ওপেন হবে
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'index.html'));
+});
 
 app.get('/api/config', (req, res) => {
   res.json({
