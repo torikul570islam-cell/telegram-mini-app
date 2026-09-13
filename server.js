@@ -39,7 +39,7 @@ const UserSchema = new mongoose.Schema({
   starBalance: { type: Number, default: 0, min: 0 },     
   referredBy: { type: String, default: null },
   completedTasks: { type: Array, default: [] },
-  skippedTasks: { type: Array, default: [] }, // স্কিপ করা টাস্ক ট্র্যাক করার জন্য নতুন ফিল্ড
+  skippedTasks: { type: Array, default: [] }, // স্কিপ করা টাস্ক ট্র্যাক করার জন্য
   lastDailyBonus: { type: Date, default: null },
   lastTaskTime: { type: Date, default: null }
 });
@@ -132,7 +132,7 @@ app.post('/api/user', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// রিকোয়ারমেন্ট ১: অ্যাডমিন আইডি দিয়ে ইউজারকে ক্রেডিট/স্টার গিফট করার এপিআই
+// ফিচারের ১: অ্যাডমিন প্যানেল থেকে আইডি দিয়ে ক্রেডিট বা স্টার গিফট করার এপিআই
 app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
   try {
     const requesterId = String(req.telegramUser?.id);
@@ -170,7 +170,7 @@ app.post('/api/admin/reward', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-// রিকোয়ারমেন্ট ৩: টাস্ক ক্রিয়েট করার সময় কোনো ব্যালেন্স কাটবে না (ফ্রি করা হয়েছে)
+// ফিচারের ৩: টাস্ক ক্রিয়েট করার সময় কোনো ব্যালেন্স কাটবে না (ফ্রি করা হয়েছে)
 app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
   try {
     const { telegramId, platformType, socialLink, rewardPerTask } = req.body;
@@ -229,7 +229,7 @@ app.get('/api/my-tasks/:telegramId', async (req, res) => {
   }
 });
 
-// রিকোয়ারমেন্ট ২: সর্বোচ্চ ২টি টাস্ক দেখানো, স্কিপ বা কমপ্লিট করলে নতুন আসা এবং ক্রিয়েটরের ব্যালেন্স না থাকলে ফ্রিজ হওয়া
+// ফিচারের ২: একসাথে সর্বোচ্চ ২টি টাস্ক দেখানো, স্কিপ বা কমপ্লিট করলে নতুন আসা এবং ক্রিয়েটরের ব্যালেন্স না থাকলে ফ্রিজ হওয়া
 app.get('/api/tasks', async (req, res) => {
   try {
     const { platform, telegramId } = req.query;
@@ -273,7 +273,6 @@ app.get('/api/tasks', async (req, res) => {
       }
     }
 
-    // একবারে সর্বোচ্চ ২টি টাস্ক ফিল্টার করে পাঠানো
     validTasks = validTasks.slice(0, 2); 
     res.json(validTasks);
   } catch (err) {
