@@ -147,4 +147,135 @@ app.post('/api/create-task', verifyTelegramAuth, async (req, res) => {
     );
 
     if (!updatedUser) {
-      return
+      return res.status(400).json({ success: false, message: "Insufficient balance!" });
+    }
+
+    const newTask = new Task({
+      creatorTelegramId: String(telegramId),
+      platformType,
+      socialLink,
+      rewardPerTask: reward,
+      status: 'Active',
+      completedCount: 0
+    });
+    await newTask.save();
+    
+    res.json({ success: true, message: "Task created successfully!", balance: updatedUser.balance });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/task/:taskId', verifyTelegramAuth, async (req, res) => {
+  try {
+    const { taskId } = req.params;
+    const telegramId = req.telegramUser?.id || req.body.telegramId;
+
+    let task = await Task.findById(taskId);
+    if (!task) return res.status(404).json({ success: false, message: "Task not found" });
+
+    if (task.creatorTelegramId !== String(telegramId)) {
+      return res.status(403).json({ success: false, message: "Unauthorized to delete this task" });
+    }
+
+    await Task.findByIdAndDelete(taskId);
+    res.json({ success: true, message: "Task deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/my-tasks/:telegramId', async (req, res) => {
+  try {
+    const tasks = await Task.find({ creatorTelegramId: String(req.params.telegramId) });
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/tasks', async (req, res) => {
+  try {
+    const { platform, telegramId } = req.query;
+    let query = { status: 'Active' };
+    if (platform && platform !== 'All') {
+      query.platformType = { $regex: platform, $options: 'i' };
+    }
+    
+    let tasks = await Task.find(query);
+    if (telegramId) {
+      tasks = tasks.filter(t => t.creatorTelegramId !== String(telegramId) && !t.completedUsers.includes(String(telegramId)));
+    }
+    res.json(tasks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/complete-task', verifyTelegramAuth, async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+  try {
+    const { telegramId, taskId } = req.body;
+    if (!telegramId || !taskId) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ error: "Invalid data" });
+    }
+
+    let task = await Task.findOne({ _id: taskId, status: 'Active' }).session(session);
+    if (!task) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(404).json({ error: "Task not found or already completed" });
+    }
+
+    if (task.creatorTelegramId === String(telegramId)) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, message: "You cannot complete your own task!" });
+    }
+
+    if (task.completedUsers.includes(String(telegramId))) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, message: "You have already completed this task!" });
+    }
+
+    const updatedTask = await Task.findOneAndUpdate(
+      { _id: taskId, completedUsers: { $ne: String(telegramId) } },
+      { 
+        $push: { completedUsers: String(telegramId) },
+        $inc: { completedCount: 1 } 
+      },
+      { new: true, session }
+    );
+
+    if (!updatedTask) {
+      await session.abortTransaction();
+      session.endSession();
+      return res.status(400).json({ success: false, message: "Task completion failed!" });
+    }
+
+    const updatedUser = await User.findOneAndUpdate(
+      { telegramId: String(telegramId) },
+      { 
+        $inc: { balance: task.rewardPerTask },
+        $push: { completedTasks: taskId } 
+      },
+      { new: true, session }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    res.json({ success: true, balance: updatedUser.balance });
+  } catch (err) {
+    await session.abortTransaction();
+    session.endSession();
+    res.status(500).json({ error: err.message });
+  }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
