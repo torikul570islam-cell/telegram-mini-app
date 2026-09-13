@@ -11,12 +11,12 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const MONGO_URI = process.env.MONGO_URI;
-const ADMIN_ID = process.env.ADMIN_ID; 
-const BOT_USERNAME = process.env.BOT_USERNAME; 
-const EMAIL_USER = process.env.EMAIL_USER; 
-const EMAIL_PASS = process.env.EMAIL_PASS; 
+const BOT_TOKEN = process.env.BOT_TOKEN || '';
+const MONGO_URI = process.env.MONGO_URI || '';
+const ADMIN_ID = process.env.ADMIN_ID || ''; 
+const BOT_USERNAME = process.env.BOT_USERNAME || ''; 
+const EMAIL_USER = process.env.EMAIL_USER || ''; 
+const EMAIL_PASS = process.env.EMAIL_PASS || ''; 
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, 
@@ -54,7 +54,11 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-const bot = new TelegramBot(BOT_TOKEN);
+// Safe Bot Initialization to prevent deploy crashes
+let bot = null;
+if (BOT_TOKEN) {
+  bot = new TelegramBot(BOT_TOKEN, { polling: false });
+}
 
 const transporter = nodemailer.createTransport({
   service: 'gmail',
@@ -378,7 +382,9 @@ app.post('/api/admin/reward', async (req, res) => {
     }
 
     try {
-      await bot.sendMessage(targetUserId, `🎁 Congratulations! Admin rewarded you with ${numAmount} ${type === 'starBalance' ? 'Stars' : 'Credits'}.`);
+      if (bot) {
+        await bot.sendMessage(targetUserId, `🎁 Congratulations! Admin rewarded you with ${numAmount} ${type === 'starBalance' ? 'Stars' : 'Credits'}.`);
+      }
     } catch(e) {}
 
     res.json({ success: true, message: `Successfully rewarded ${numAmount} to user ${targetUserId}!` });
@@ -416,8 +422,10 @@ app.post('/api/withdraw', verifyTelegramAuth, async (req, res) => {
       await transporter.sendMail(mailOptions);
     } catch(e) { console.log("Email error:", e); }
 
-    const adminMessage = `🚨 *New Withdraw Request!*\n\n👤 *User:* @${username || 'N/A'}\n🆔 *ID:* \`${telegramId}\`\n⭐ *Amount:* ${amount} Stars\n💳 *Method:* ${paymentMethod}\n📱 *Account:* \`${accountNo}\``;
-    await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+    if (bot && ADMIN_ID) {
+      const adminMessage = `🚨 *New Withdraw Request!*\n\n👤 *User:* @${username || 'N/A'}\n🆔 *ID:* \`${telegramId}\`\n⭐ *Amount:* ${amount} Stars\n💳 *Method:* ${paymentMethod}\n📱 *Account:* \`${accountNo}\``;
+      await bot.sendMessage(ADMIN_ID, adminMessage, { parse_mode: 'Markdown' });
+    }
 
     res.status(200).json({ success: true, message: "Withdraw request submitted successfully!", starBalance: user.starBalance });
   } catch (error) {
@@ -429,6 +437,7 @@ app.post('/api/withdraw', verifyTelegramAuth, async (req, res) => {
 app.post('/api/send-invoice', verifyTelegramAuth, async (req, res) => {
   const { chatId, amount, telegramId } = req.body;
   try {
+    if (!bot) return res.status(500).json({ success: false, error: "Bot not initialized" });
     const prices = [{ label: 'Buy Credits/Stars', amount: Number(amount) || 100 }];
     await bot.sendInvoice(
       chatId,
@@ -445,28 +454,30 @@ app.post('/api/send-invoice', verifyTelegramAuth, async (req, res) => {
   }
 });
 
-bot.on('pre_checkout_query', async (query) => {
-  try {
-    await bot.answerPreCheckoutQuery(query.id, true);
-  } catch (error) {
-    console.error("Pre-checkout Error:", error);
-  }
-});
-
-bot.on('message', async (msg) => {
-  if (msg.successful_payment) {
-    const chatId = msg.chat.id;
-    const totalStars = msg.successful_payment.total_amount;
-    let user = await User.findOneAndUpdate(
-      { telegramId: String(chatId) },
-      { $inc: { starBalance: totalStars } },
-      { new: true }
-    );
-    if (user) {
-      await bot.sendMessage(chatId, `🎉 Payment of ${totalStars} Stars successful! Star balance updated.`);
+if (bot) {
+  bot.on('pre_checkout_query', async (query) => {
+    try {
+      await bot.answerPreCheckoutQuery(query.id, true);
+    } catch (error) {
+      console.error("Pre-checkout Error:", error);
     }
-  }
-});
+  });
+
+  bot.on('message', async (msg) => {
+    if (msg.successful_payment) {
+      const chatId = msg.chat.id;
+      const totalStars = msg.successful_payment.total_amount;
+      let user = await User.findOneAndUpdate(
+        { telegramId: String(chatId) },
+        { $inc: { starBalance: totalStars } },
+        { new: true }
+      );
+      if (user) {
+        await bot.sendMessage(chatId, `🎉 Payment of ${totalStars} Stars successful! Star balance updated.`);
+      }
+    }
+  });
+}
 
 app.get('/', (req, res) => {
   res.send(`
