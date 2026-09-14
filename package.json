@@ -1,51 +1,18 @@
-async function fetchTasks() {
-            try {
-                const res = await fetch(`${SERVER_URL}/api/tasks/${telegramId}`);
-                const tasks = await res.json();
-                const listDiv = document.getElementById('tasks-list');
-                
-                if(!Array.isArray(tasks) || tasks.length === 0) {
-                    listDiv.innerHTML = '<p style="color:#94a3b8; text-align:center;">No tasks available right now.</p>';
-                    return;
-                }
-
-                listDiv.innerHTML = tasks.map((t, index) => `
-                    <div class="task-item" id="task-box-${t._id}">
-                        <div style="text-align: left; font-size: 13px; margin-bottom: 8px;">
-                            <b>${t.platform.toUpperCase()}</b> - ${t.taskType}<br>
-                            <span style="color: #4ade80;">Reward: +${t.reward} pts</span>
-                        </div>
-                        <div class="btn-group" id="btn-group-${t._id}">
-                            <a class="btn" href="${t.link}" target="_blank" onclick="startTimer('${t._id}')">Visit Link</a>
-                            <button class="btn skip-btn" onclick="skipTask('${t._id}')">Skip</button>
-                        </div>
-                        <div id="timer-display-${t._id}" style="display:none; color: #facc15; font-size: 13px; margin-top: 5px; font-weight: bold;">
-                            ⏳ Please wait <span id="countdown-${t._id}">6</span>s...
-                        </div>
-                    </div>
-                `).join('');
-            } catch (err) {
-                document.getElementById('tasks-list').innerHTML = 'Error loading tasks';
-            }
-        }
-
-        // ৬ সেকেন্ডের টাইমার ফাংশন
-        function startTimer(taskId) {
-            // "Visit Link" এ ক্লিক করার পর বাটন লুকিয়ে টাইমার দেখাবে
-            document.getElementById(`btn-group-${taskId}`).style.display = 'none';
-            const timerDisplay = document.getElementById(`timer-display-${taskId}`);
-            const countdownSpan = document.getElementById(`countdown-${taskId}`);
-            timerDisplay.style.display = 'block';
-
-            let timeLeft = 6;
-            const timer = setInterval(() => {
-                timeLeft--;
-                countdownSpan.innerText = timeLeft;
-
-                if (timeLeft <= 0) {
-                    clearInterval(timer);
-                    // ৬ সেকেন্ড শেষ হলে ক্লেইম বাটন চলে আসবে
-                    timerDisplay.innerHTML = `<button class="btn" style="background: #10b981; width: 100%; font-weight: bold;" onclick="completeTask('${taskId}')">✅ Claim Reward</button>`;
-                }
-            }, 1000);
+{
+  "name": "telegram-mini-app",
+  "version": "1.0.0",
+  "description": "Telegram Mini App with Stars and Gmail notifications",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.2.0",
+    "mongoose": "^8.3.1",
+    "node-telegram-bot-api": "^0.66.0",
+    "nodemailer": "^6.9.13"
+  }
 }
