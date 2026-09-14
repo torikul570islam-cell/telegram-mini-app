@@ -330,7 +330,7 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// টাস্ক লিস্ট আনা
+// টাস্ক লিস্ট আনা (নিজের টাস্ক এবং স্কিপ/কমপ্লিট করা টাস্ক বাদ দিয়ে)
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -345,6 +345,28 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
         }).limit(2);
 
         res.json(tasks);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ইউজারের নিজের টাস্ক লিস্ট আনা (My Tasks ট্যাবের জন্য)
+app.get('/api/my-tasks/:telegramId', async (req, res) => {
+    try {
+        const { telegramId } = req.params;
+        const tasks = await Task.find({ ownerId: telegramId });
+        res.json(tasks);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// টাস্ক ডিলিট করা API (মালিক নিজের টাস্ক ডিলিট করতে পারবে)
+app.delete('/api/tasks/delete/:taskId', async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        await Task.findByIdAndDelete(taskId);
+        res.json({ success: true, message: "Task deleted successfully!" });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -365,24 +387,40 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টাস্ক কমপ্লিট করা API
+// টাস্ক কমপ্লিট করা API (পোস্টপেইড: মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কেটে ওয়ার্কারকে দেওয়া)
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
         const user = await User.findOne({ telegramId });
         const task = await Task.findById(taskId);
 
-        if (!user || !task) return res.status(404).json({ error: "Not found" });
+        if (!user || !task) return res.status(404).json({ success: false, error: "Task or User not found" });
 
-        if (!user.completedTasks.includes(taskId)) {
-            user.completedTasks.push(taskId);
-            user.points += task.reward;
-            await user.save();
+        if (user.completedTasks.includes(taskId)) {
+            return res.status(400).json({ success: false, error: "Task already completed" });
         }
+
+        // টাস্কের মালিককে খুঁজে চেক করা তার পর্যাপ্ত ব্যালেন্স আছে কি না
+        const taskOwner = await User.findOne({ telegramId: task.ownerId });
+        if (!taskOwner || taskOwner.points < task.reward) {
+            return res.status(400).json({ success: false, error: "Task owner has insufficient balance. Task expired." });
+        }
+
+        // মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কাটা
+        taskOwner.points -= task.reward;
+        await taskOwner.save();
+
+        // টাস্ক সম্পন্নকারীকে পয়েন্ট দেওয়া
+        user.completedTasks.push(taskId);
+        user.points += task.reward;
+        await user.save();
+
+        // টাস্কটি ডিলিট করে দেওয়া যাতে আর কেউ না পায়
+        await Task.findByIdAndDelete(taskId);
 
         res.json({ success: true, points: user.points });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -406,7 +444,7 @@ app.post('/api/tasks/create', async (req, res) => {
         await newTask.save();
         res.json({ success: true, message: "Task created successfully!" });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
 
