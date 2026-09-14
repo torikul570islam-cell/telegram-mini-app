@@ -18,14 +18,15 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-// ইউজার স্কিমা
+// ইউজার স্কিমা (lastDailyBonus ফিল্ড যুক্ত করা হয়েছে)
 const UserSchema = new mongoose.Schema({
     telegramId: { type: String, unique: true },
     points: { type: Number, default: 50 },
     completedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
     skippedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
     isAdmin: { type: Boolean, default: false },
-    password: { type: String, default: "" }
+    password: { type: String, default: "" },
+    lastDailyBonus: { type: Date, default: null }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -122,7 +123,40 @@ app.post('/api/forgot-password', async (req, res) => {
     }
 });
 
-// টেলিগ্রাম স্টার ইনভয়েস API
+// ডেইলি বোনাস API (প্রতি ২৪ ঘণ্টায় ৫ পয়েন্ট)
+app.post('/api/daily-bonus', async (req, res) => {
+    try {
+        const { telegramId } = req.body;
+        if (!telegramId) return res.status(400).json({ success: false, error: "Telegram ID is required" });
+
+        let user = await User.findOne({ telegramId });
+        if (!user) return res.status(404).json({ success: false, error: "User not found" });
+
+        const now = new Date();
+        if (user.lastDailyBonus) {
+            const lastBonusTime = new Date(user.lastDailyBonus);
+            const hoursDifference = (now - lastBonusTime) / (1000 * 60 * 60);
+
+            if (hoursDifference < 24) {
+                const remainingHours = Math.ceil(24 - hoursDifference);
+                return res.status(400).json({ 
+                    success: false, 
+                    error: `You can claim your next bonus in about ${remainingHours} hours!` 
+                });
+            }
+        }
+
+        user.points = (user.points || 0) + 5;
+        user.lastDailyBonus = now;
+        await user.save();
+
+        res.json({ success: true, newBalance: user.points });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// টেলিগ্রাম স্টার ইনভয়েস API
 app.post('/api/create-invoice', async (req, res) => {
     try {
         const { telegramId, packageType } = req.body;
@@ -175,7 +209,7 @@ bot.on('pre_checkout_query', async (query) => {
     }
 });
 
-// পেমেন্ট সফল হওয়ার পর পয়েন্ট যোগ করা
+// পেমেন্ট সফল হওয়ার পর পয়েন্ট যোগ করা
 bot.on('successful_payment', async (msg) => {
     try {
         const paymentInfo = msg.successful_payment;
@@ -228,7 +262,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টাস্ক কমপ্লিট করা API (ত্রুটি সংশোধন করা হয়েছে)
+// টাস্ক কমপ্লিট করা API
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -246,6 +280,30 @@ app.post('/api/tasks/complete', async (req, res) => {
         res.json({ success: true, points: user.points });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// টাস্ক ক্রিয়েট করার API (ন্যূনতম রিওয়ার্ড ৫ পয়েন্ট নিশ্চিতকরণসহ)
+app.post('/api/tasks/create', async (req, res) => {
+    try {
+        const { telegramId, platform, taskType, link, reward } = req.body;
+        
+        if (Number(reward) < 5) {
+            return res.status(400).json({ success: false, error: "Minimum reward must be at least 5 points!" });
+        }
+
+        const newTask = new Task({
+            platform,
+            taskType,
+            link,
+            reward: Number(reward),
+            ownerId: telegramId
+        });
+
+        await newTask.save();
+        res.json({ success: true, message: "Task created successfully!" });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
