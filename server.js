@@ -148,6 +148,27 @@ app.post('/api/website-login', async (req, res) => {
     }
 });
 
+// পাসওয়ার্ড ভুলে গেলে নতুন পাসওয়ার্ড পাঠানোর API
+app.post('/api/forgot-password', async (req, res) => {
+    try {
+        const { telegramId } = req.body;
+        if (!telegramId) return res.status(400).json({ success: false, error: "Telegram ID is required" });
+
+        let user = await User.findOne({ telegramId });
+        if (!user) return res.status(404).json({ success: false, error: "User not found" });
+
+        const tempPassword = Math.random().toString(36).slice(-8);
+        user.password = tempPassword;
+        await user.save();
+
+        await bot.sendMessage(telegramId, `🔐 Your password has been reset. Your new temporary password is: ${tempPassword}`);
+
+        res.json({ success: true, message: "New password sent to Telegram!" });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ডেইলি বোনাস API (প্রতি ২৪ ঘণ্টায় ৫ পয়েন্ট)
 app.post('/api/daily-bonus', async (req, res) => {
     try {
@@ -265,7 +286,7 @@ bot.on('successful_payment', async (msg) => {
     }
 });
 
-// উইথড্র রিকোয়েস্ট API (নোডমেইলার সহ)
+// উইথড্র রিকোয়েস্ট API (নোডমেইলার সহ)
 app.post('/api/withdraw', async (req, res) => {
     try {
         const { telegramId, method, account, amount } = req.body;
