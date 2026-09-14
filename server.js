@@ -14,13 +14,14 @@ mongoose.connect(MONGO_URI, {
 }).then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-// ইউজার স্কিমা (প্রোফাইল, পয়েন্ট, স্কিপড ও কমপ্লিটেড টাস্ক ট্র্যাক করার জন্য)
+// ইউজার স্কিমা (পাসওয়ার্ড ফিল্ড সহ আপডেট করা)
 const UserSchema = new mongoose.Schema({
     telegramId: { type: String, unique: true },
     points: { type: Number, default: 50 },
     completedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
     skippedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
-    isAdmin: { type: Boolean, default: false } // এডমিন কন্ট্রোল
+    isAdmin: { type: Boolean, default: false }, // এডমিন কন্ট্রোল
+    password: { type: String, default: "" } // নতুন পাসওয়ার্ড ফিল্ড
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -39,8 +40,8 @@ app.get('/api/user/:telegramId', async (req, res) => {
         const { telegramId } = req.params;
         let user = await User.findOne({ telegramId });
         if (!user) {
-            // প্রথম ইউজারের ক্ষেত্রে প্রথমজনকে এডমিন বানিয়ে দিতে পারেন বা ডিফল্ট রাখতে পারেন
-            user = new User({ telegramId, points: 50 });
+            const isFirstUser = (await User.countDocuments()) === 0;
+            user = new User({ telegramId, points: 50, isAdmin: isFirstUser });
             await user.save();
         }
         res.json(user);
@@ -49,7 +50,51 @@ app.get('/api/user/:telegramId', async (req, res) => {
     }
 });
 
-// ২. টাস্ক লিস্ট আনা (যেগুলো কমপ্লিট বা স্কিপ করা হয়নি)
+// নতুন ১.ক. পাসওয়ার্ড সেট করার API
+app.post('/api/set-password', async (req, res) => {
+    try {
+        const { telegramId, password } = req.body;
+        await User.findOneAndUpdate({ telegramId }, { password });
+        res.json({ success: true, message: "Password set successfully!" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// নতুন ১.খ. পাসওয়ার্ড পরিবর্তনের API
+app.post('/api/change-password', async (req, res) => {
+    try {
+        const { telegramId, oldPassword, newPassword } = req.body;
+        const user = await User.findOne({ telegramId });
+        
+        if (!user) return res.status(404).json({ success: false, error: "User not found" });
+        
+        if (user.password && user.password !== oldPassword) {
+            return res.status(400).json({ success: false, error: "Incorrect old password" });
+        }
+
+        user.password = newPassword;
+        await user.save();
+        res.json({ success: true, message: "Password changed successfully!" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// নতুন ১.গ. মূল ওয়েবসাইট থেকে লগইন করার API (Telegram ID ও Password দিয়ে)
+app.post('/api/website-login', async (req, res) => {
+    try {
+        const { telegramId, password } = req.body;
+        const user = await User.findOne({ telegramId, password });
+        if (!user) return res.status(400).json({ success: false, error: "Invalid Telegram ID or Password" });
+        
+        res.json({ success: true, message: "Login successful", user });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ২. টাস্ক লিস্ট আনা
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -58,7 +103,6 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
 
         const excludeIds = [...user.completedTasks, ...user.skippedTasks];
 
-        // একসাথে মাত্র ২টি টাস্ক দেখানোর জন্য .limit(2) ব্যবহার করা হয়েছে
         const tasks = await Task.find({ 
             ownerId: { $ne: telegramId }, 
             _id: { $nin: excludeIds } 
@@ -85,7 +129,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// ৪. টাস্ক কমপ্লিট করা API (পয়েন্ট যোগ হবে এবং অটো লিস্ট থেকে সরে যাবে)
+// ৪. টাস্ক কমপ্লিট করা API
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -106,7 +150,7 @@ app.post('/api/tasks/complete', async (req, res) => {
     }
 });
 
-// ৫. টেলিগ্রাম স্টার দিয়ে ক্রেডিট বা পয়েন্ট কেনা (Telegram Stars Payment simulation / Integration)
+// ৫. টেলিগ্রাম স্টার দিয়ে ক্রেডিট বা পয়েন্ট কেনা
 app.post('/api/buy-credits', async (req, res) => {
     try {
         const { telegramId, packageType } = req.body;
@@ -114,7 +158,7 @@ app.post('/api/buy-credits', async (req, res) => {
         if (!user) return res.status(404).json({ error: "User not found" });
 
         let addedPoints = 0;
-        if (packageType === 'small') addedPoints = 100;     // যেমন: নির্দিষ্ট স্টার এর বিনিময়ে
+        if (packageType === 'small') addedPoints = 100;     
         else if (packageType === 'medium') addedPoints = 500;
         else if (packageType === 'large') addedPoints = 1200;
 
@@ -127,13 +171,12 @@ app.post('/api/buy-credits', async (req, res) => {
     }
 });
 
-// ৬. এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
+// ৬. এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { adminId, targetTelegramId, amount } = req.body;
         const admin = await User.findOne({ telegramId: adminId });
 
-        // সিকিউরিটি চেক: শুধু এডমিন হলে পয়েন্ট দিতে পারবে
         if (!admin || !admin.isAdmin) {
             return res.status(403).json({ error: "Unauthorized! Admin only." });
         }
@@ -145,28 +188,6 @@ app.post('/api/admin/give-credit', async (req, res) => {
         await targetUser.save();
 
         res.json({ success: true, newBalance: targetUser.points });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ৭. নতুন টাস্ক ক্রিয়েট API
-app.post('/api/tasks/create', async (req, res) => {
-    try {
-        const { telegramId, platform, taskType, link, reward } = req.body;
-        const user = await User.findOne({ telegramId });
-
-        if (!user || user.points < reward) {
-            return res.status(400).json({ error: "Insufficient points!" });
-        }
-
-        user.points -= Number(reward);
-        await user.save();
-
-        const newTask = new Task({ platform, taskType, link, reward: Number(reward), ownerId: telegramId });
-        await newTask.save();
-
-        res.json({ success: true, points: user.points });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
