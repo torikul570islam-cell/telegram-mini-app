@@ -1,27 +1,31 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const TelegramBot = require('node-telegram-bot-api');
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://your_mongo_connection_string";
+const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_TELEGRAM_BOT_TOKEN";
 
-mongoose.connect(MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-}).then(() => console.log("MongoDB Connected"))
+// টেলিগ্রাম বট পোলিং মোডে চালু করা
+const bot = new TelegramBot(BOT_TOKEN, { polling: true });
+
+// মঙ্গোডিবি কানেকশন (ওয়ার্নিং মুক্ত ক্লিন কোড)
+mongoose.connect(MONGO_URI)
+  .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-// ইউজার স্কিমা (পাসওয়ার্ড ফিল্ড সহ আপডেট করা)
+// ইউজার স্কিমা
 const UserSchema = new mongoose.Schema({
     telegramId: { type: String, unique: true },
     points: { type: Number, default: 50 },
     completedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
     skippedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
-    isAdmin: { type: Boolean, default: false }, // এডমিন কন্ট্রোল
-    password: { type: String, default: "" } // নতুন পাসওয়ার্ড ফিল্ড
+    isAdmin: { type: Boolean, default: false },
+    password: { type: String, default: "" }
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -34,7 +38,7 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// ১. ইউজার প্রোফাইল ও ডাটা আনা
+// ইউজার প্রোফাইল ও ডাটা আনা
 app.get('/api/user/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -81,7 +85,7 @@ app.post('/api/change-password', async (req, res) => {
     }
 });
 
-// মূল ওয়েবসাইট থেকে লগইন করার API
+// ওয়েবসাইট থেকে লগইন করার API
 app.post('/api/website-login', async (req, res) => {
     try {
         const { telegramId, password } = req.body;
@@ -94,7 +98,7 @@ app.post('/api/website-login', async (req, res) => {
     }
 });
 
-// ফর্গেট পাসওয়ার্ড রিকভারি API (নতুন যুক্ত করা হলো)
+// ফর্গেট পাসওয়ার্ড রিকভারি API
 app.post('/api/forgot-password', async (req, res) => {
     try {
         const { telegramId } = req.body;
@@ -104,7 +108,6 @@ app.post('/api/forgot-password', async (req, res) => {
             return res.status(404).json({ success: false, error: "User not found with this Telegram ID!" });
         }
 
-        // ৬ ডিজিটের একটি নতুন অস্থায়ী পাসওয়ার্ড তৈরি করা
         const newPassword = Math.random().toString(36).slice(-6);
         user.password = newPassword; 
         await user.save();
@@ -115,11 +118,82 @@ app.post('/api/forgot-password', async (req, res) => {
             tempPassword: newPassword 
         });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// টেলিগ্রাম স্টার ইনভয়েস API
+app.post('/api/create-invoice', async (req, res) => {
+    try {
+        const { telegramId, packageType } = req.body;
+        
+        let title = "";
+        let description = "";
+        let amount = 0;
+        let points = 0;
+
+        if (packageType === 'small') {
+            title = "100 Points";
+            description = "Get 100 points for Like4Like tasks";
+            amount = 5;
+            points = 100;
+        } else if (packageType === 'medium') {
+            title = "500 Points";
+            description = "Get 500 points for Like4Like tasks";
+            amount = 20;
+            points = 500;
+        } else if (packageType === 'large') {
+            title = "1200 Points";
+            description = "Get 1200 points for Like4Like tasks";
+            amount = 40;
+            points = 1200;
+        } else {
+            return res.status(400).json({ success: false, error: "Invalid package type" });
+        }
+
+        const invoiceLink = await bot.createInvoiceLink(
+            title,
+            description,
+            JSON.stringify({ telegramId, points }),
+            "",
+            "XTR",
+            [{ label: title, amount: amount }]
+        );
+
+        res.json({ success: true, invoiceLink });
+    } catch (err) {
         res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// ২. টাস্ক লিস্ট আনা
+// প্রি-চেকআউট হ্যান্ডলার
+bot.on('pre_checkout_query', async (query) => {
+    try {
+        await bot.answerPreCheckoutQuery(query.id, true);
+    } catch (err) {
+        console.error(err);
+    }
+});
+
+// পেমেন্ট সফল হওয়ার পর পয়েন্ট যোগ করা
+bot.on('successful_payment', async (msg) => {
+    try {
+        const paymentInfo = msg.successful_payment;
+        const payload = JSON.parse(paymentInfo.invoice_payload);
+        const { telegramId, points } = payload;
+
+        let user = await User.findOne({ telegramId });
+        if (user) {
+            user.points += points;
+            await user.save();
+            await bot.sendMessage(telegramId, `✅ Payment successful! ${points} points have been added to your account.`);
+        }
+    } catch (err) {
+        console.error("Payment error:", err);
+    }
+});
+
+// টাস্ক লিস্ট আনা
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -139,7 +213,7 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
     }
 });
 
-// ৩. টাস্ক স্কিপ করা API
+// টাস্ক স্কিপ করা API
 app.post('/api/tasks/skip', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -154,7 +228,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// ৪. টাস্ক কমপ্লিট করা API
+// টাস্ক কমপ্লিট করা API
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -169,34 +243,13 @@ app.post('/api/tasks/complete', async (req, res) => {
             await user.save();
         }
 
-        res.json({ success: true, points: user.points });
+        res.json({ success: { success: true, points: user.points });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// ৫. টেলিগ্রাম স্টার দিয়ে ক্রেডিট বা পয়েন্ট কেনা
-app.post('/api/buy-credits', async (req, res) => {
-    try {
-        const { telegramId, packageType } = req.body;
-        const user = await User.findOne({ telegramId });
-        if (!user) return res.status(404).json({ error: "User not found" });
-
-        let addedPoints = 0;
-        if (packageType === 'small') addedPoints = 100;     
-        else if (packageType === 'medium') addedPoints = 500;
-        else if (packageType === 'large') addedPoints = 1200;
-
-        user.points += addedPoints;
-        await user.save();
-
-        res.json({ success: true, points: user.points });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ৬. এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
+// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { adminId, targetTelegramId, amount } = req.body;
