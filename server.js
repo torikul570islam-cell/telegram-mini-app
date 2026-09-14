@@ -79,12 +79,11 @@ app.post('/api/register', async (req, res) => {
             user = new User({ 
                 telegramId, 
                 points: 50, 
-                isAdmin: (telegramId === ADMIN_TELEGRAM_ID), // আপনার আইডি হলে সরাসরি অ্যাডমিন হবে
+                isAdmin: (telegramId === ADMIN_TELEGRAM_ID), 
                 referredBy: validReferrer 
             });
             await user.save();
         } else {
-            // যদি ইউজার আগে থেকেই থাকে কিন্তু অ্যাডমিন না করা হয়ে থাকে, তবে এখানেও চেক করে আপডেট করে দেওয়া হলো
             if (telegramId === ADMIN_TELEGRAM_ID && !user.isAdmin) {
                 user.isAdmin = true;
                 await user.save();
@@ -105,7 +104,7 @@ app.get('/api/user/:telegramId', async (req, res) => {
             user = new User({ 
                 telegramId, 
                 points: 50, 
-                isAdmin: (telegramId === ADMIN_TELEGRAM_ID) // আপনার আইডি হলে অ্যাডমিন হবে
+                isAdmin: (telegramId === ADMIN_TELEGRAM_ID) 
             });
             await user.save();
         } else {
@@ -346,7 +345,7 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// টাস্ক লিস্ট আনা (নিজের টাস্ক এবং স্কিপ/কমপ্লিট করা টাস্ক বাদ দিয়ে)
+// টাস্ক লিস্ট আনা
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -366,7 +365,7 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
     }
 });
 
-// ইউজারের নিজের টাস্ক লিস্ট আনা (My Tasks ট্যাবের জন্য)
+// ইউজারের নিজের টাস্ক লিস্ট আনা
 app.get('/api/my-tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -377,7 +376,7 @@ app.get('/api/my-tasks/:telegramId', async (req, res) => {
     }
 });
 
-// টাস্ক ডিলিট করা API (মালিক নিজের টাস্ক ডিলিট করতে পারবে)
+// টাস্ক ডিলিট করা API
 app.delete('/api/tasks/delete/:taskId', async (req, res) => {
     try {
         const { taskId } = req.params;
@@ -403,7 +402,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টাস্ক কমপ্লিট করা API (পোস্টপেইড: মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কেটে ওয়ার্কারকে দেওয়া)
+// টাস্ক কমপ্লিট করা API
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -416,22 +415,18 @@ app.post('/api/tasks/complete', async (req, res) => {
             return res.status(400).json({ success: false, error: "Task already completed" });
         }
 
-        // টাস্কের মালিককে খুঁজে চেক করা তার পর্যাপ্ত ব্যালেন্স আছে কি না
         const taskOwner = await User.findOne({ telegramId: task.ownerId });
         if (!taskOwner || taskOwner.points < task.reward) {
             return res.status(400).json({ success: false, error: "Task owner has insufficient balance. Task expired." });
         }
 
-        // মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কাটা
         taskOwner.points -= task.reward;
         await taskOwner.save();
 
-        // টাস্ক সম্পন্নকারীকে পয়েন্ট দেওয়া
         user.completedTasks.push(taskId);
         user.points += task.reward;
         await user.save();
 
-        // টাস্কটি ডিলিট করে দেওয়া যাতে আর কেউ না পায়
         await Task.findByIdAndDelete(taskId);
 
         res.json({ success: true, points: user.points });
@@ -464,10 +459,23 @@ app.post('/api/tasks/create', async (req, res) => {
     }
 });
 
-// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
+// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API (অটো-ফিক্স সহ)
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { adminTelegramId, targetTelegramId, amount } = req.body;
+        
+        // অটো-ফিক্স: আপনার আইডি হলে ডাটাবেজে স্বয়ংক্রিয়ভাবে অ্যাডমিন স্ট্যাটাস নিশ্চিত করে নেবে
+        if (adminTelegramId === ADMIN_TELEGRAM_ID) {
+            let adminUser = await User.findOne({ telegramId: adminTelegramId });
+            if (adminUser && !adminUser.isAdmin) {
+                adminUser.isAdmin = true;
+                await adminUser.save();
+            } else if (!adminUser) {
+                adminUser = new User({ telegramId: adminTelegramId, isAdmin: true, points: 50 });
+                await adminUser.save();
+            }
+        }
+
         const admin = await User.findOne({ telegramId: adminTelegramId });
 
         if (!admin || !admin.isAdmin) {
