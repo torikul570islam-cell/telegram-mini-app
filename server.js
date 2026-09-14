@@ -12,6 +12,9 @@ app.use(cors());
 const MONGO_URI = "mongodb+srv://torikul570:Nadira1432@cluster0.m5iatns.mongodb.net/?appName=Cluster0";
 const BOT_TOKEN = "8801531798:AAEw7SJhnT1T8x69caPgMncjI6IPBAgWN3Q";
 
+// আপনার নির্দিষ্ট অ্যাডমিন টেলিগ্রাম আইডি
+const ADMIN_TELEGRAM_ID = "8351272061";
+
 // ইমেল কনফিগারেশন (নোডমেইলার)
 const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -61,7 +64,6 @@ app.post('/api/register', async (req, res) => {
 
         let user = await User.findOne({ telegramId });
         if (!user) {
-            const isFirstUser = (await User.countDocuments()) === 0;
             let validReferrer = null;
 
             if (referredBy && referredBy !== telegramId) {
@@ -77,10 +79,16 @@ app.post('/api/register', async (req, res) => {
             user = new User({ 
                 telegramId, 
                 points: 50, 
-                isAdmin: isFirstUser, 
+                isAdmin: (telegramId === ADMIN_TELEGRAM_ID), // আপনার আইডি হলে সরাসরি অ্যাডমিন হবে
                 referredBy: validReferrer 
             });
             await user.save();
+        } else {
+            // যদি ইউজার আগে থেকেই থাকে কিন্তু অ্যাডমিন না করা হয়ে থাকে, তবে এখানেও চেক করে আপডেট করে দেওয়া হলো
+            if (telegramId === ADMIN_TELEGRAM_ID && !user.isAdmin) {
+                user.isAdmin = true;
+                await user.save();
+            }
         }
         res.json({ success: true, user });
     } catch (err) {
@@ -94,9 +102,17 @@ app.get('/api/user/:telegramId', async (req, res) => {
         const { telegramId } = req.params;
         let user = await User.findOne({ telegramId });
         if (!user) {
-            const isFirstUser = (await User.countDocuments()) === 0;
-            user = new User({ telegramId, points: 50, isAdmin: isFirstUser });
+            user = new User({ 
+                telegramId, 
+                points: 50, 
+                isAdmin: (telegramId === ADMIN_TELEGRAM_ID) // আপনার আইডি হলে অ্যাডমিন হবে
+            });
             await user.save();
+        } else {
+            if (telegramId === ADMIN_TELEGRAM_ID && !user.isAdmin) {
+                user.isAdmin = true;
+                await user.save();
+            }
         }
         res.json(user);
     } catch (err) {
@@ -448,7 +464,7 @@ app.post('/api/tasks/create', async (req, res) => {
     }
 });
 
-// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API (সংশোধিত ও মিল সম্পন্ন)
+// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { adminTelegramId, targetTelegramId, amount } = req.body;
@@ -466,7 +482,7 @@ app.post('/api/admin/give-credit', async (req, res) => {
 
         res.json({ success: true, newBalance: targetUser.points });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
 
