@@ -13,7 +13,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN || "YOUR_TELEGRAM_BOT_TOKEN";
 // টেলিগ্রাম বট পোলিং মোডে চালু করা
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// মঙ্গোডিবি কানেকশন (ওয়ার্নিং মুক্ত ক্লিন কোড)
+// মঙ্গোডিবি কানেকশন
 mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
@@ -228,7 +228,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টাস্ক কমপ্লিট করা API
+// টাস্ক কমপ্লিট করা API (ত্রুটি সংশোধন করা হয়েছে)
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -243,7 +243,7 @@ app.post('/api/tasks/complete', async (req, res) => {
             await user.save();
         }
 
-        res.json({ success: { success: true, points: user.points });
+        res.json({ success: true, points: user.points });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
