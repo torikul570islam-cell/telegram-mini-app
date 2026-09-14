@@ -459,31 +459,20 @@ app.post('/api/tasks/create', async (req, res) => {
     }
 });
 
-// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API (অটো-ফিক্স সহ)
+// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানোর API (HTML পরিবর্তনের প্রয়োজন নেই)
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
-        const { adminTelegramId, targetTelegramId, amount } = req.body;
+        const { targetTelegramId, amount } = req.body;
         
-        // অটো-ফিক্স: আপনার আইডি হলে ডাটাবেজে স্বয়ংক্রিয়ভাবে অ্যাডমিন স্ট্যাটাস নিশ্চিত করে নেবে
-        if (adminTelegramId === ADMIN_TELEGRAM_ID) {
-            let adminUser = await User.findOne({ telegramId: adminTelegramId });
-            if (adminUser && !adminUser.isAdmin) {
-                adminUser.isAdmin = true;
-                await adminUser.save();
-            } else if (!adminUser) {
-                adminUser = new User({ telegramId: adminTelegramId, isAdmin: true, points: 50 });
-                await adminUser.save();
-            }
+        if (!targetTelegramId || !amount) {
+            return res.status(400).json({ success: false, error: "Telegram ID and Amount are required!" });
         }
 
-        const admin = await User.findOne({ telegramId: adminTelegramId });
-
-        if (!admin || !admin.isAdmin) {
-            return res.status(403).json({ success: false, error: "Unauthorized! Admin only." });
+        let targetUser = await User.findOne({ telegramId: targetTelegramId });
+        
+        if (!targetUser) {
+            return res.status(404).json({ success: false, error: "Target user not found in database!" });
         }
-
-        const targetUser = await User.findOne({ telegramId: targetTelegramId });
-        if (!targetUser) return res.status(404).json({ success: false, error: "Target user not found!" });
 
         targetUser.points += Number(amount);
         await targetUser.save();
