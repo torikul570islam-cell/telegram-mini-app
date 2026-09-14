@@ -330,7 +330,7 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// টাস্ক লিস্ট আনা (নিজের টাস্ক এবং স্কিপ/কমপ্লিট করা টাস্ক বাদ দিয়ে)
+// টাস্ক লিস্ট আনা (নিজের টাস্ক এবং স্কিপ/কমপ্লিট করা টাস্ক বাদ দিয়ে)
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -387,7 +387,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টাস্ক কমপ্লিট করা API (পোস্টপেইড: মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কেটে ওয়ার্কারকে দেওয়া)
+// টাস্ক কমপ্লিট করা API (পোস্টপেইড: মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কেটে ওয়ার্কারকে দেওয়া)
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -406,21 +406,21 @@ app.post('/api/tasks/complete', async (req, res) => {
             return res.status(400).json({ success: false, error: "Task owner has insufficient balance. Task expired." });
         }
 
-        // মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কাটা
+        // মালিকের অ্যাকাউন্ট থেকে পয়েন্ট কাটা
         taskOwner.points -= task.reward;
         await taskOwner.save();
 
-        // টাস্ক সম্পন্নকারীকে পয়েন্ট দেওয়া
+        // টাস্ক সম্পন্নকারীকে পয়েন্ট দেওয়া
         user.completedTasks.push(taskId);
         user.points += task.reward;
         await user.save();
 
-        // টাস্কটি ডিলিট করে দেওয়া যাতে আর কেউ না পায়
+        // টাস্কটি ডিলিট করে দেওয়া যাতে আর কেউ না পায়
         await Task.findByIdAndDelete(taskId);
 
         res.json({ success: true, points: user.points });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -448,25 +448,25 @@ app.post('/api/tasks/create', async (req, res) => {
     }
 });
 
-// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API
+// এডমিন প্যানেল: ইউজারকে ফ্রি ক্রেডিট দেওয়ার API (সংশোধিত ও মিল সম্পন্ন)
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
-        const { adminId, targetTelegramId, amount } = req.body;
-        const admin = await User.findOne({ telegramId: adminId });
+        const { adminTelegramId, targetTelegramId, amount } = req.body;
+        const admin = await User.findOne({ telegramId: adminTelegramId });
 
         if (!admin || !admin.isAdmin) {
-            return res.status(403).json({ error: "Unauthorized! Admin only." });
+            return res.status(403).json({ success: false, error: "Unauthorized! Admin only." });
         }
 
         const targetUser = await User.findOne({ telegramId: targetTelegramId });
-        if (!targetUser) return res.status(404).json({ error: "Target user not found!" });
+        if (!targetUser) return res.status(404).json({ success: false, error: "Target user not found!" });
 
         targetUser.points += Number(amount);
         await targetUser.save();
 
         res.json({ success: true, newBalance: targetUser.points });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
