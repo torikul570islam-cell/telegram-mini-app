@@ -14,14 +14,14 @@ mongoose.connect(MONGO_URI, {
 }).then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-// ইউজার স্কিমা (পাসওয়ার্ড ফিল্ড সহ আপডেট করা)
+// ইউজার স্কিমা (পাসওয়ার্ড ফিল্ড সহ আপডেট করা)
 const UserSchema = new mongoose.Schema({
     telegramId: { type: String, unique: true },
     points: { type: Number, default: 50 },
     completedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
     skippedTasks: [{ type: mongoose.Schema.Types.ObjectId }],
     isAdmin: { type: Boolean, default: false }, // এডমিন কন্ট্রোল
-    password: { type: String, default: "" } // নতুন পাসওয়ার্ড ফিল্ড
+    password: { type: String, default: "" } // নতুন পাসওয়ার্ড ফিল্ড
 });
 const User = mongoose.model('User', UserSchema);
 
@@ -50,7 +50,7 @@ app.get('/api/user/:telegramId', async (req, res) => {
     }
 });
 
-// নতুন ১.ক. পাসওয়ার্ড সেট করার API
+// পাসওয়ার্ড সেট করার API
 app.post('/api/set-password', async (req, res) => {
     try {
         const { telegramId, password } = req.body;
@@ -61,7 +61,7 @@ app.post('/api/set-password', async (req, res) => {
     }
 });
 
-// নতুন ১.খ. পাসওয়ার্ড পরিবর্তনের API
+// পাসওয়ার্ড পরিবর্তনের API
 app.post('/api/change-password', async (req, res) => {
     try {
         const { telegramId, oldPassword, newPassword } = req.body;
@@ -81,7 +81,7 @@ app.post('/api/change-password', async (req, res) => {
     }
 });
 
-// নতুন ১.গ. মূল ওয়েবসাইট থেকে লগইন করার API (Telegram ID ও Password দিয়ে)
+// মূল ওয়েবসাইট থেকে লগইন করার API
 app.post('/api/website-login', async (req, res) => {
     try {
         const { telegramId, password } = req.body;
@@ -91,6 +91,31 @@ app.post('/api/website-login', async (req, res) => {
         res.json({ success: true, message: "Login successful", user });
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+// ফর্গেট পাসওয়ার্ড রিকভারি API (নতুন যুক্ত করা হলো)
+app.post('/api/forgot-password', async (req, res) => {
+    try {
+        const { telegramId } = req.body;
+        const user = await User.findOne({ telegramId });
+
+        if (!user) {
+            return res.status(404).json({ success: false, error: "User not found with this Telegram ID!" });
+        }
+
+        // ৬ ডিজিটের একটি নতুন অস্থায়ী পাসওয়ার্ড তৈরি করা
+        const newPassword = Math.random().toString(36).slice(-6);
+        user.password = newPassword; 
+        await user.save();
+
+        res.json({ 
+            success: true, 
+            message: "Temporary password generated successfully.", 
+            tempPassword: newPassword 
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
