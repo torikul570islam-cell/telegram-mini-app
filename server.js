@@ -32,7 +32,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-// ইউজার স্কিমা (রেফারেল, স্টার ও উইথড্র ফিল্ডসহ)
+// ইউজার স্কিমা
 const UserSchema = new mongoose.Schema({
     telegramId: { type: String, unique: true },
     points: { type: Number, default: 50 },
@@ -47,16 +47,18 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
+// টাস্ক স্কিমা (completedCount ফিল্ডসহ)
 const TaskSchema = new mongoose.Schema({
     platform: String,
     taskType: String,
     link: String,
     reward: { type: Number, default: 10 },
-    ownerId: String
+    ownerId: String,
+    completedCount: { type: Number, default: 0 }
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডেল করার API
+// ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডেল করার API (রেফারেল বোনাস ৫০ পয়েন্ট করা হয়েছে)
 app.post('/api/register', async (req, res) => {
     try {
         const { telegramId, referredBy } = req.body;
@@ -71,7 +73,7 @@ app.post('/api/register', async (req, res) => {
                 if (referrerUser) {
                     validReferrer = referredBy;
                     referrerUser.referralCount += 1;
-                    referrerUser.points += 50; 
+                    referrerUser.points += 50; // ফ্রন্টএন্ডের লেখার সাথে মিলিয়ে ৫০ পয়েন্ট করা হলো
                     await referrerUser.save();
                 }
             }
@@ -180,7 +182,7 @@ app.post('/api/forgot-password', async (req, res) => {
 
         res.json({ success: true, message: "New password sent to Telegram!" });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -238,8 +240,7 @@ app.post('/api/create-invoice', async (req, res) => {
             amount = 20;
             points = 500;
         } else if (packageType === 'large') {
-            title = "1200 Points";
-            description = "Get 1200 points for Like4Like tasks";
+            title, description = "1200 Points", "Get 1200 points for Like4Like tasks";
             amount = 40;
             points = 1200;
         } else {
@@ -341,11 +342,11 @@ app.post('/api/withdraw', async (req, res) => {
 
         res.json({ success: true, message: "Withdrawal request submitted successfully!" });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
 
-// টাস্ক লিস্ট আনা
+// টাস্ক লিস্ট আনা (মালিকের পর্যাপ্ত ব্যালেন্স থাকলে তবেই টাস্ক দেখাবে - অটো হাইড ফিচার)
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -354,12 +355,20 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
 
         const excludeIds = [...user.completedTasks, ...user.skippedTasks];
 
-        const tasks = await Task.find({ 
+        const allTasks = await Task.find({ 
             ownerId: { $ne: telegramId }, 
             _id: { $nin: excludeIds } 
-        }).limit(2);
+        });
 
-        res.json(tasks);
+        let validTasks = [];
+        for (let task of allTasks) {
+            const owner = await User.findOne({ telegramId: task.ownerId });
+            if (owner && owner.points >= task.reward) {
+                validTasks.push(task);
+            }
+        }
+
+        res.json(validTasks.slice(0, 2));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -402,7 +411,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টাস্ক কমপ্লিট করা API
+// টাস্ক কমপ্লিট করা API (টাস্ক ডিলিট না হয়ে completedCount বাড়ার লজিক)
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -427,7 +436,9 @@ app.post('/api/tasks/complete', async (req, res) => {
         user.points += task.reward;
         await user.save();
 
-        await Task.findByIdAndDelete(taskId);
+        // টাস্ক ডিলিট না করে completedCount বাড়ানো হলো
+        task.completedCount = (task.completedCount || 0) + 1;
+        await task.save();
 
         res.json({ success: true, points: user.points });
     } catch (err) {
@@ -449,7 +460,8 @@ app.post('/api/tasks/create', async (req, res) => {
             taskType,
             link,
             reward: Number(reward),
-            ownerId: telegramId
+            ownerId: telegramId,
+            completedCount: 0
         });
 
         await newTask.save();
@@ -459,16 +471,25 @@ app.post('/api/tasks/create', async (req, res) => {
     }
 });
 
-// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানোর API (HTML পরিবর্তনের প্রয়োজন নেই)
+// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানোর API (ফ্রন্টএন্ডের targetUserId এবং targetTelegramId উভয়টির জন্য সাপোর্টযুক্ত)
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
-        const { targetTelegramId, amount } = req.body;
+        const { telegramId, targetUserId, targetTelegramId, amount } = req.body;
+        const recipientId = targetUserId || targetTelegramId;
         
-        if (!targetTelegramId || !amount) {
-            return res.status(400).json({ success: false, error: "Telegram ID and Amount are required!" });
+        if (!recipientId || !amount) {
+            return res.status(400).json({ success: false, error: "Target User ID and Amount are required!" });
         }
 
-        let targetUser = await User.findOne({ telegramId: targetTelegramId });
+        // অ্যাডমিন অথোরাইজেশন চেক (যদি অ্যাডমিন আইডি থেকে রিকোয়েস্ট আসে)
+        if (telegramId && telegramId !== ADMIN_TELEGRAM_ID) {
+            const adminCheck = await User.findOne({ telegramId });
+            if (!adminCheck || !adminCheck.isAdmin) {
+                return res.status(403).json({ success: false, error: "Unauthorized! Admin access required." });
+            }
+        }
+
+        let targetUser = await User.findOne({ telegramId: recipientId });
         
         if (!targetUser) {
             return res.status(404).json({ success: false, error: "Target user not found in database!" });
