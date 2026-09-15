@@ -71,7 +71,7 @@ app.post('/api/register', async (req, res) => {
                 if (referrerUser) {
                     validReferrer = referredBy;
                     referrerUser.referralCount += 1;
-                    referrerUser.points += 10; 
+                    referrerUser.points += 50; 
                     await referrerUser.save();
                 }
             }
