@@ -5,7 +5,7 @@ const TelegramBot = require('node-telegram-bot-api');
 const nodemailer = require('nodemailer');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // বড় স্ক্রিনশট ইমেজ রিসিভ করার জন্য লিমিট বাড়ানো হলো
 app.use(cors());
 
 // আপনার কনফিগার করা ডাটাবেজ ও বট টোকেন
@@ -47,7 +47,7 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
-// টাস্ক স্কিমা (completedCount ফিল্ডসহ)
+// টাস্ক স্কিমা
 const TaskSchema = new mongoose.Schema({
     platform: String,
     taskType: String,
@@ -58,7 +58,33 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডেল করার API (রেফারেল বোনাস ৫০ পয়েন্ট করা হয়েছে)
+// ১. টেলিগ্রাম টাস্ক ক্রিয়েট পেন্ডিং রিকোয়েস্ট স্কিমা (অ্যাডমিন প্রুফ স্ক্রিনশটসহ)
+const TaskCreationRequestSchema = new mongoose.Schema({
+    userId: String,
+    taskData: {
+        platform: { type: String, default: 'telegram' },
+        taskType: String,
+        link: String,
+        reward: Number,
+        targetChannelId: String
+    },
+    proofUrl: String, // স্ক্রিনশট ডাটা বা URL
+    status: { type: String, default: 'pending' }, // pending, approved, rejected
+    createdAt: { type: Date, default: Date.now }
+});
+const TaskCreationRequest = mongoose.model('TaskCreationRequest', TaskCreationRequestSchema);
+
+// ২. অন্যান্য প্ল্যাটফর্মের টাস্ক কমপ্লিট প্রুফ সাবমিশন স্কিমা
+const TaskSubmissionProofSchema = new mongoose.Schema({
+    userId: String,
+    taskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
+    proofUrl: String, // কমপ্লিশন স্ক্রিনশট
+    status: { type: String, default: 'pending' }, // pending, approved, rejected
+    createdAt: { type: Date, default: Date.now }
+});
+const TaskSubmissionProof = mongoose.model('TaskSubmissionProof', TaskSubmissionProofSchema);
+
+// ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডেল করার API
 app.post('/api/register', async (req, res) => {
     try {
         const { telegramId, referredBy } = req.body;
@@ -73,7 +99,7 @@ app.post('/api/register', async (req, res) => {
                 if (referrerUser) {
                     validReferrer = referredBy;
                     referrerUser.referralCount += 1;
-                    referrerUser.points += 50; // ফ্রন্টএন্ডের লেখার সাথে মিলিয়ে ৫০ পয়েন্ট করা হলো
+                    referrerUser.points += 50;
                     await referrerUser.save();
                 }
             }
@@ -186,7 +212,7 @@ app.post('/api/forgot-password', async (req, res) => {
     }
 });
 
-// ডেইলি বোনাস API (প্রতি ২৪ ঘণ্টায় ৫ পয়েন্ট)
+// ডেইলি বোনাস API
 app.post('/api/daily-bonus', async (req, res) => {
     try {
         const { telegramId } = req.body;
@@ -240,7 +266,8 @@ app.post('/api/create-invoice', async (req, res) => {
             amount = 20;
             points = 500;
         } else if (packageType === 'large') {
-            title, description = "1200 Points", "Get 1200 points for Like4Like tasks";
+            title = "1200 Points";
+            description = "Get 1200 points for Like4Like tasks";
             amount = 40;
             points = 1200;
         } else {
@@ -271,7 +298,7 @@ bot.on('pre_checkout_query', async (query) => {
     }
 });
 
-// পেমেন্ট সফল হওয়ার পর পয়েন্ট এবং ৩০% রেফারেল স্টার কমিশন যোগ করা
+// পেমেন্ট সফল হওয়ার পর পয়েন্ট এবং রেফারেল স্টার কমিশন যোগ করা
 bot.on('successful_payment', async (msg) => {
     try {
         const paymentInfo = msg.successful_payment;
@@ -302,7 +329,7 @@ bot.on('successful_payment', async (msg) => {
     }
 });
 
-// উইথড্র রিকোয়েস্ট API (নোডমেইলার সহ)
+// উইথড্র রিকোয়েস্ট API
 app.post('/api/withdraw', async (req, res) => {
     try {
         const { telegramId, method, account, amount } = req.body;
@@ -335,8 +362,6 @@ app.post('/api/withdraw', async (req, res) => {
         transporter.sendMail(mailOptions, (error, info) => {
             if (error) {
                 console.error("Email send error:", error);
-            } else {
-                console.log("Withdrawal email sent: " + info.response);
             }
         });
 
@@ -346,7 +371,7 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// টাস্ক লিস্ট আনা (মালিকের পর্যাপ্ত ব্যালেন্স থাকলে তবেই টাস্ক দেখাবে - অটো হাইড ফিচার)
+// টাস্ক লিস্ট আনা
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -368,7 +393,7 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
             }
         }
 
-        res.json(validTasks.slice(0, 2));
+        res.json(validTasks.slice(0, 10));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -411,8 +436,8 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টাস্ক কমপ্লিট করা API (টাস্ক ডিলিট না হয়ে completedCount বাড়ার লজিক)
-app.post('/api/tasks/complete', async (req, res) => {
+// ৩. টেলিগ্রাম টাস্ক অটো-ভেরিফিকেশন API (বট API দিয়ে মেম্বারশিপ চেক)
+app.post('/api/tasks/verify-telegram', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
         const user = await User.findOne({ telegramId });
@@ -422,6 +447,26 @@ app.post('/api/tasks/complete', async (req, res) => {
 
         if (user.completedTasks.includes(taskId)) {
             return res.status(400).json({ success: false, error: "Task already completed" });
+        }
+
+        // টাস্কের লিংক বা চ্যানেল আইডি থেকে চ্যাট আইডি বের করা (যেমন: @channel_username বা t.me/channel)
+        let chatIdentifier = task.link.trim();
+        if (chatIdentifier.includes('t.me/')) {
+            chatIdentifier = '@' + chatIdentifier.split('t.me/')[1].split('/')[0];
+        }
+
+        // টেলিগ্রাম বট API দিয়ে চেক করা ইউজার চ্যানেলে জয়েন করেছে কি না
+        try {
+            const chatMember = await bot.getChatMember(chatIdentifier, telegramId);
+            const status = chatMember.status;
+            const validStatuses = ['creator', 'administrator', 'member'];
+
+            if (!validStatuses.includes(status)) {
+                return res.status(400).json({ success: false, error: "You have not joined the channel yet! Please join first." });
+            }
+        } catch (botErr) {
+            console.error("Bot verification error:", botErr);
+            return res.status(400).json({ success: false, error: "Could not verify membership. Make sure the bot is an admin in that channel!" });
         }
 
         const taskOwner = await User.findOne({ telegramId: task.ownerId });
@@ -436,17 +481,71 @@ app.post('/api/tasks/complete', async (req, res) => {
         user.points += task.reward;
         await user.save();
 
-        // টাস্ক ডিলিট না করে completedCount বাড়ানো হলো
         task.completedCount = (task.completedCount || 0) + 1;
         await task.save();
 
-        res.json({ success: true, points: user.points });
+        res.json({ success: true, message: `Verification successful! +${task.reward} points added.` });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// টাস্ক ক্রিয়েট করার API
+// ৪. অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API
+app.post('/api/tasks/submit-proof', async (req, res) => {
+    try {
+        const { telegramId, taskId, proofUrl } = req.body;
+        if (!telegramId || !taskId || !proofUrl) {
+            return res.status(400).json({ success: false, error: "All fields including screenshot proof are required!" });
+        }
+
+        const newProof = new TaskSubmissionProof({
+            userId: telegramId,
+            taskId,
+            proofUrl,
+            status: 'pending'
+        });
+
+        await newProof.save();
+        res.json({ success: true, message: "Proof submitted successfully! Admin will review and credit points." });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ৫. টেলিগ্রাম টাস্ক ক্রিয়েট রিকোয়েস্ট (অ্যাডমিন প্রুফসহ) API
+app.post('/api/tasks/create-telegram-request', async (req, res) => {
+    try {
+        const { telegramId, taskType, link, reward, targetChannelId, proofUrl } = req.body;
+        
+        if (Number(reward) < 5) {
+            return res.status(400).json({ success: false, error: "Minimum reward must be at least 5 points!" });
+        }
+
+        if (!proofUrl || !targetChannelId) {
+            return res.status(400).json({ success: false, error: "Channel ID and Bot Admin proof screenshot are required!" });
+        }
+
+        const newReq = new TaskCreationRequest({
+            userId: telegramId,
+            taskData: {
+                platform: 'telegram',
+                taskType,
+                link,
+                reward: Number(reward),
+                targetChannelId
+            },
+            proofUrl,
+            status: 'pending'
+        });
+
+        await newReq.save();
+        res.json({ success: true, message: "Telegram task submitted for admin review! It will be live after admin approval." });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ৬. অন্যান্য সাধারণ টাস্ক ক্রিয়েট করার API (ইউটিউব/ফেসবুক ইত্যাদি)
 app.post('/api/tasks/create', async (req, res) => {
     try {
         const { telegramId, platform, taskType, link, reward } = req.body;
@@ -471,7 +570,91 @@ app.post('/api/tasks/create', async (req, res) => {
     }
 });
 
-// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানোর API (ফ্রন্টএন্ডের targetUserId এবং targetTelegramId উভয়টির জন্য সাপোর্টযুক্ত)
+// ৭. অ্যাডমিন প্যানেল: পেন্ডিং টেলিগ্রাম টাস্ক ক্রিয়েট রিকোয়েস্ট লিস্ট
+app.get('/api/admin/pending-task-creations', async (req, res) => {
+    try {
+        const requests = await TaskCreationRequest.find({ status: 'pending' });
+        res.json({ success: true, requests });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ৮. অ্যাডমিন প্যানেল: পেন্ডিং টাস্ক কমপ্লিট প্রুফ লিস্ট
+app.get('/api/admin/pending-proofs', async (req, res) => {
+    try {
+        const proofs = await TaskSubmissionProof.find({ status: 'pending' }).populate('taskId');
+        res.json({ success: true, proofs });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ৯. অ্যাডমিন প্যানেল: টেলিগ্রাম টাস্ক ক্রিয়েশন রিভিউ (Approve/Reject) ও ইমেজ অটো-ডিলিট (ডাটাবেজ মেমোরি সেভ করতে)
+app.post('/api/admin/review-task-creation', async (req, res) => {
+    try {
+        const { submissionId, action } = req.body;
+        const request = await TaskCreationRequest.findById(submissionId);
+        
+        if (!request) return res.status(404).json({ success: false, error: "Request not found" });
+
+        if (action === 'approve') {
+            const newTask = new Task({
+                platform: request.taskData.platform,
+                taskType: request.taskData.taskType,
+                link: request.taskData.link,
+                reward: request.taskData.reward,
+                ownerId: request.userId,
+                completedCount: 0
+            });
+            await newTask.save();
+        }
+
+        // 512 MB ফ্রি স্টোরেজ নিরাপদ রাখতে প্রসেস হওয়ার পর রিকোয়েস্ট বা ডাটাবেজ থেকে ছবি ডিলিট করা
+        await TaskCreationRequest.findByIdAndDelete(submissionId);
+
+        res.json({ success: true, message: `Task creation request ${action}ed successfully!` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ১০. অ্যাডমিন প্যানেল: টাস্ক কমপ্লিট প্রুফ রিভিউ (Approve/Reject) ও পয়েন্ট যোগ করা এবং ইমেজ অটো-ডিলিট
+app.post('/api/admin/review-submission', async (req, res) => {
+    try {
+        const { submissionId, action } = req.body;
+        const proof = await TaskSubmissionProof.findById(submissionId).populate('taskId');
+        
+        if (!proof) return res.status(404).json({ success: false, error: "Proof not found" });
+
+        if (action === 'approve' && proof.taskId) {
+            const user = await User.findOne({ telegramId: proof.userId });
+            const task = proof.taskId;
+            const taskOwner = await User.findOne({ telegramId: task.ownerId });
+
+            if (user && taskOwner && taskOwner.points >= task.reward) {
+                taskOwner.points -= task.reward;
+                await taskOwner.save();
+
+                user.completedTasks.push(task._id);
+                user.points += task.reward;
+                await user.save();
+
+                task.completedCount = (task.completedCount || 0) + 1;
+                await task.save();
+            }
+        }
+
+        // 512 MB ফ্রি স্টোরেজ নিরাপদ রাখতে প্রুফ ইমেজ ডাটাবেজ থেকে ডিলিট করা
+        await TaskSubmissionProof.findByIdAndDelete(submissionId);
+
+        res.json({ success: true, message: `Submission ${action}ed successfully!` });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ১১. সরাসরি ইউজারকে ক্রেডিট পাঠানোর API
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { telegramId, targetUserId, targetTelegramId, amount } = req.body;
@@ -481,7 +664,6 @@ app.post('/api/admin/give-credit', async (req, res) => {
             return res.status(400).json({ success: false, error: "Target User ID and Amount are required!" });
         }
 
-        // অ্যাডমিন অথোরাইজেশন চেক (যদি অ্যাডমিন আইডি থেকে রিকোয়েস্ট আসে)
         if (telegramId && telegramId !== ADMIN_TELEGRAM_ID) {
             const adminCheck = await User.findOne({ telegramId });
             if (!adminCheck || !adminCheck.isAdmin) {
