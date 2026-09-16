@@ -500,7 +500,7 @@ app.post('/api/tasks/verify-telegram', async (req, res) => {
     }
 });
 
-// অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API (Gemini AI Vision + 40% Threshold + Dynamic taskType)
+// অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API (Gemini AI Vision + Multi-Platform Dynamic Prompt)
 app.post('/api/tasks/submit-proof', async (req, res) => {
     try {
         const { telegramId, taskId, proofUrl } = req.body;
@@ -521,10 +521,26 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
 
         const taskType = task.taskType || 'general action';
 
-        const aiPrompt = `Analyze this screenshot to verify if the user has successfully completed the specific task type: "${taskType}". 
-        Reply strictly in JSON format with two fields: 
-        'confidence' (an integer from 0 to 100 representing your confidence percentage) and 
-        'reason' (short explanation why it matches or fails the '${taskType}' task).`;
+        // নতুন এবং নিখুঁত মাল্টি-প্ল্যাটফর্ম এআই প্রম্পট
+        const aiPrompt = `You are a strict and highly accurate AI Task Verification Expert. Your job is to verify user-submitted proof screenshots for micro-job platforms.
+
+        TASK TYPE: "${taskType}"
+
+        EVALUATION INSTRUCTIONS:
+        1. Analyze the uploaded screenshot with extreme care.
+        2. Check if the visual evidence matches the specific task type ("${taskType}"):
+           - If taskType involves "Telegram": Look for chat interface, channel join confirmation, or member status.
+           - If taskType involves "YouTube Subscribe": Look for the "Subscribed" button, checkmark, or bell icon on a channel page.
+           - If taskType involves "YouTube/Facebook/Instagram/TikTok Like": Look for a highlighted/filled like button, heart, or thumbs-up icon.
+           - If taskType involves "Followers": Look for a "Following" or "Friends" state on the profile page.
+        3. Be strict: If the screenshot is blurry, completely unrelated, shows a different app/page, or lacks proof, give a low confidence score (0-30). If it clearly matches, give a high confidence score (70-100).
+
+        RESPONSE FORMAT:
+        Reply strictly in valid JSON format ONLY, without any markdown formatting or extra text:
+        {
+          "confidence": <integer between 0 to 100>,
+          "reason": "<A short explanation of what is visible in the screenshot and why it passes or fails>"
+        }`;
 
         let confidenceScore = 0;
         try {
