@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
 const nodemailer = require('nodemailer');
+const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
 app.use(express.json({ limit: '10mb' })); // বড় স্ক্রিনশট ইমেজ রিসিভ করার জন্য লিমিট বাড়ানো হলো
@@ -14,6 +15,9 @@ const BOT_TOKEN = "8801531798:AAEw7SJhnT1T8x69caPgMncjI6IPBAgWN3Q";
 
 // আপনার নির্দিষ্ট অ্যাডমিন টেলিগ্রাম আইডি
 const ADMIN_TELEGRAM_ID = "8351272061";
+
+// জেমিনি এআই ইনিশিয়ালাইজেশন
+const ai = new GoogleGenAI({ apiKey: 'AQ.Ab8RN6KKSyFdILfBaLUgaECW2_lX15q7O8D3P74SbSQYGxOGrg' });
 
 // ইমেল কনফিগারেশন (নোডমেইলার)
 const transporter = nodemailer.createTransport({
@@ -78,7 +82,7 @@ const TaskCreationRequest = mongoose.model('TaskCreationRequest', TaskCreationRe
 const TaskSubmissionProofSchema = new mongoose.Schema({
     userId: String,
     taskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
-    proofUrl: String, // কমপ্লিশন স্ক্রিনশট
+    proofUrl: String, // কমপ্লিশন স্ক্রিনশট (Base64)
     status: { type: String, default: 'pending' }, // pending, approved, rejected
     createdAt: { type: Date, default: Date.now }
 });
@@ -258,17 +262,17 @@ app.post('/api/create-invoice', async (req, res) => {
         if (packageType === 'small') {
             title = "100 Points";
             description = "Get 100 points for Like4Like tasks";
-            amount = 5;
+            amount = 10;
             points = 100;
         } else if (packageType === 'medium') {
             title = "500 Points";
             description = "Get 500 points for Like4Like tasks";
-            amount = 20;
+            amount = 40;
             points = 500;
         } else if (packageType === 'large') {
             title = "1200 Points";
             description = "Get 1200 points for Like4Like tasks";
-            amount = 40;
+            amount = 99;
             points = 1200;
         } else {
             return res.status(400).json({ success: false, error: "Invalid package type" });
@@ -285,7 +289,7 @@ app.post('/api/create-invoice', async (req, res) => {
 
         res.json({ success: true, invoiceLink });
     } catch (err) {
-        res.status(500).json({ success: false, error: err.message });
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -371,7 +375,7 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// টাস্ক লিস্ট আনা
+// টাস্ক লিস্ট আনা (টেলিগ্রাম বট অ্যাডমিন অটো-হাইড লজিকসহ)
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -388,9 +392,33 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
         let validTasks = [];
         for (let task of allTasks) {
             const owner = await User.findOne({ telegramId: task.ownerId });
-            if (owner && owner.points >= task.reward) {
-                validTasks.push(task);
+            
+            // মালিকের পর্যাপ্ত পয়েন্ট না থাকলে স্কিপ হবে
+            if (!owner || owner.points < task.reward) continue;
+
+            // টেলিগ্রাম টাস্কের ক্ষেত্রে বট অ্যাডমিন আছে কি না চেক করে অটো-হাইড করার লজিক
+            if (task.platform === 'telegram') {
+                try {
+                    let chatIdentifier = task.link.trim();
+                    if (chatIdentifier.includes('t.me/')) {
+                        chatIdentifier = '@' + chatIdentifier.split('t.me/')[1].split('/')[0];
+                    }
+
+                    const botInfo = await bot.getMe();
+                    const chatMember = await bot.getChatMember(chatIdentifier, botInfo.id);
+                    const adminStatuses = ['creator', 'administrator'];
+
+                    // বট অ্যাডমিন না থাকলে টাস্কটি হাইড থাকবে
+                    if (!adminStatuses.includes(chatMember.status)) {
+                        continue; 
+                    }
+                } catch (botErr) {
+                    // কোনো এরর বা বট রিমুভ হয়ে গেলে টাস্ক অটো হাইড থাকবে
+                    continue;
+                }
             }
+
+            validTasks.push(task);
         }
 
         res.json(validTasks.slice(0, 10));
@@ -449,13 +477,11 @@ app.post('/api/tasks/verify-telegram', async (req, res) => {
             return res.status(400).json({ success: false, error: "Task already completed" });
         }
 
-        // টাস্কের লিংক বা চ্যানেল আইডি থেকে চ্যাট আইডি বের করা (যেমন: @channel_username বা t.me/channel)
         let chatIdentifier = task.link.trim();
         if (chatIdentifier.includes('t.me/')) {
             chatIdentifier = '@' + chatIdentifier.split('t.me/')[1].split('/')[0];
         }
 
-        // টেলিগ্রাম বট API দিয়ে চেক করা ইউজার চ্যানেলে জয়েন করেছে কি না
         try {
             const chatMember = await bot.getChatMember(chatIdentifier, telegramId);
             const status = chatMember.status;
@@ -490,7 +516,7 @@ app.post('/api/tasks/verify-telegram', async (req, res) => {
     }
 });
 
-// ৪. অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API
+// ৪. অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API (Gemini AI Vision + 40% Threshold + Dynamic taskType)
 app.post('/api/tasks/submit-proof', async (req, res) => {
     try {
         const { telegramId, taskId, proofUrl } = req.body;
@@ -498,17 +524,94 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
             return res.status(400).json({ success: false, error: "All fields including screenshot proof are required!" });
         }
 
-        const newProof = new TaskSubmissionProof({
-            userId: telegramId,
-            taskId,
-            proofUrl,
-            status: 'pending'
-        });
+        const user = await User.findOne({ telegramId });
+        const task = await Task.findById(taskId);
 
-        await newProof.save();
-        res.json({ success: true, message: "Proof submitted successfully! Admin will review and credit points." });
+        if (!user || !task) {
+            return res.status(404).json({ success: false, error: "User or Task not found" });
+        }
+
+        if (user.completedTasks.includes(taskId)) {
+            return res.status(400).json({ success: false, error: "Task already completed" });
+        }
+
+        // টাস্কের ধরন ডাইনামিকালি পাস করা (যেমন: subscribe, like, join, follow ইত্যাদি)
+        const taskType = task.taskType || 'general action';
+
+        // জেমিনি এআই ভিশন প্রম্পট
+        const aiPrompt = `Analyze this screenshot to verify if the user has successfully completed the specific task type: "${taskType}". 
+        Reply strictly in JSON format with two fields: 
+        'confidence' (an integer from 0 to 100 representing your confidence percentage) and 
+        'reason' (short explanation why it matches or fails the '${taskType}' task).`;
+
+        let confidenceScore = 0;
+        try {
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: [
+                    {
+                        inlineData: {
+                            data: proofUrl.replace(/^data:image\/\w+;base64,/, ""),
+                            mimeType: "image/jpeg"
+                        }
+                    },
+                    {
+                        text: aiPrompt
+                    }
+                ]
+            });
+
+            const rawText = response.text.replace(/```json/g, '').replace(/```/g, '').trim();
+            const aiResult = JSON.parse(rawText);
+            confidenceScore = aiResult.confidence || 0;
+        } catch (aiErr) {
+            console.error("AI Vision verification error:", aiErr);
+            confidenceScore = 0; // এআই ফেইল করলে কনফিডেন্স ০ ধরা হবে যাতে অ্যাডমিন রিভিউতে যায়
+        }
+
+        // ৪০% থ্রেশহোল্ড রুল (>= 40% হলে অটো-এপ্রুভ, < 40% হলে অ্যাডমিন প্যানেলে যাবে)
+        if (confidenceScore >= 40) {
+            const taskOwner = await User.findOne({ telegramId: task.ownerId });
+            if (!taskOwner || taskOwner.points < task.reward) {
+                return res.status(400).json({ success: false, error: "Task owner has insufficient balance." });
+            }
+
+            taskOwner.points -= task.reward;
+            await taskOwner.save();
+
+            user.completedTasks.push(taskId);
+            user.points += task.reward;
+            await user.save();
+
+            task.completedCount = (task.completedCount || 0) + 1;
+            await task.save();
+
+            return res.json({ 
+                success: true, 
+                autoApproved: true, 
+                confidence: confidenceScore,
+                message: `Task auto-approved by AI! +${task.reward} points added.` 
+            });
+        } else {
+            // ৪০% এর নিচে হলে পেন্ডিং হিসেবে ডাটাবেজে সেভ হবে যেন অ্যাডমিন ম্যানুয়াল রিভিউ করতে পারে
+            const newProof = new TaskSubmissionProof({
+                userId: telegramId,
+                taskId,
+                proofUrl,
+                status: 'pending'
+            });
+
+            await newProof.save();
+            return res.json({ 
+                success: true, 
+                autoApproved: false, 
+                confidence: confidenceScore,
+                message: "Confidence is below 40%. Sent to admin panel for manual review." 
+            });
+        }
+
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -590,7 +693,7 @@ app.get('/api/admin/pending-proofs', async (req, res) => {
     }
 });
 
-// ৯. অ্যাডমিন প্যানেল: টেলিগ্রাম টাস্ক ক্রিয়েশন রিভিউ (Approve/Reject) ও ইমেজ অটো-ডিলিট (ডাটাবেজ মেমোরি সেভ করতে)
+// ৯. অ্যাডমিন প্যানেল: টেলিগ্রাম টাস্ক ক্রিয়েশন রিভিউ (Approve/Reject) ও ইমেজ অটো-ডিলিট
 app.post('/api/admin/review-task-creation', async (req, res) => {
     try {
         const { submissionId, action } = req.body;
@@ -610,7 +713,6 @@ app.post('/api/admin/review-task-creation', async (req, res) => {
             await newTask.save();
         }
 
-        // 512 MB ফ্রি স্টোরেজ নিরাপদ রাখতে প্রসেস হওয়ার পর রিকোয়েস্ট বা ডাটাবেজ থেকে ছবি ডিলিট করা
         await TaskCreationRequest.findByIdAndDelete(submissionId);
 
         res.json({ success: true, message: `Task creation request ${action}ed successfully!` });
@@ -645,7 +747,6 @@ app.post('/api/admin/review-submission', async (req, res) => {
             }
         }
 
-        // 512 MB ফ্রি স্টোরেজ নিরাপদ রাখতে প্রুফ ইমেজ ডাটাবেজ থেকে ডিলিট করা
         await TaskSubmissionProof.findByIdAndDelete(submissionId);
 
         res.json({ success: true, message: `Submission ${action}ed successfully!` });
