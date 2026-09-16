@@ -1,4 +1,4 @@
-[cite: 1]const express = require('express');
+const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
@@ -6,20 +6,16 @@ const nodemailer = require('nodemailer');
 const { GoogleGenAI } = require('@google/genai');
 
 const app = express();
-app.use(express.json({ limit: '10mb' })); // বড় স্ক্রিনশট ইমেজ রিসিভ করার জন্য লিমিট বাড়ানো হলো
+app.use(express.json({ limit: '10mb' }));
 app.use(cors());
 
-// আপনার কনফিগার করা ডাটাবেজ ও বট টোকেন
 const MONGO_URI = "mongodb+srv://torikul570:Nadira1432@cluster0.m5iatns.mongodb.net/?appName=Cluster0";
 const BOT_TOKEN = "8801531798:AAEw7SJhnT1T8x69caPgMncjI6IPBAgWN3Q";
-
-// আপনার নির্দিষ্ট অ্যাডমিন টেলিগ্রাম আইডি
 const ADMIN_TELEGRAM_ID = "8351272061";
 
-// জেমিনি এআই ইনিশিয়ালাইজেশন (রেন্ডার এনভায়রনমেন্ট ভেরিয়েবল থেকে কি রিড করবে)
+// জেমিনি এআই ইনিশিয়ালাইজেশন
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// ইমেল কনফিগারেশন (নোডমেইলার)
 const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
@@ -28,15 +24,12 @@ const transporter = nodemailer.createTransport({
     }
 });
 
-// টেলিগ্রাম বট পোলিং মোডে চালু করা
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
-// মঙ্গোডিবি কানেকশন
 mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-// ইউজার স্কিমা
 const UserSchema = new mongoose.Schema({
     telegramId: { type: String, unique: true },
     points: { type: Number, default: 50 },
@@ -51,7 +44,6 @@ const UserSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', UserSchema);
 
-// টাস্ক স্কিমা
 const TaskSchema = new mongoose.Schema({
     platform: String,
     taskType: String,
@@ -62,17 +54,15 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// অন্যান্য প্ল্যাটফর্মের টাস্ক কমপ্লিট প্রুফ সাবমিশন স্কিমা
 const TaskSubmissionProofSchema = new mongoose.Schema({
     userId: String,
     taskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
-    proofUrl: String, // কমপ্লিশন স্ক্রিনশট (Base64)
-    status: { type: String, default: 'pending' }, // pending, approved, rejected
+    proofUrl: String,
+    status: { type: String, default: 'pending' },
     createdAt: { type: Date, default: Date.now }
 });
 const TaskSubmissionProof = mongoose.model('TaskSubmissionProof', TaskSubmissionProofSchema);
 
-// ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডেল করার API
 app.post('/api/register', async (req, res) => {
     try {
         const { telegramId, referredBy } = req.body;
@@ -111,7 +101,6 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// ইউজার প্রোফাইল ও ডাটা আনা
 app.get('/api/user/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -135,7 +124,6 @@ app.get('/api/user/:telegramId', async (req, res) => {
     }
 });
 
-// পাসওয়ার্ড সেট করার API
 app.post('/api/set-password', async (req, res) => {
     try {
         const { telegramId, password } = req.body;
@@ -146,7 +134,6 @@ app.post('/api/set-password', async (req, res) => {
     }
 });
 
-// পাসওয়ার্ড পরিবর্তনের API
 app.post('/api/change-password', async (req, res) => {
     try {
         const { telegramId, oldPassword, newPassword } = req.body;
@@ -166,7 +153,6 @@ app.post('/api/change-password', async (req, res) => {
     }
 });
 
-// ওয়েবসাইট থেকে লগইন করার API
 app.post('/api/website-login', async (req, res) => {
     try {
         const { telegramId, password } = req.body;
@@ -179,7 +165,6 @@ app.post('/api/website-login', async (req, res) => {
     }
 });
 
-// পাসওয়ার্ড ভুলে গেলে নতুন পাসওয়ার্ড পাঠানোর API
 app.post('/api/forgot-password', async (req, res) => {
     try {
         const { telegramId } = req.body;
@@ -200,7 +185,6 @@ app.post('/api/forgot-password', async (req, res) => {
     }
 });
 
-// ডেইলি বোনাস API
 app.post('/api/daily-bonus', async (req, res) => {
     try {
         const { telegramId } = req.body;
@@ -233,7 +217,6 @@ app.post('/api/daily-bonus', async (req, res) => {
     }
 });
 
-// টেলিগ্রাম স্টার ইনভয়েস API
 app.post('/api/create-invoice', async (req, res) => {
     try {
         const { telegramId, packageType } = req.body;
@@ -277,7 +260,6 @@ app.post('/api/create-invoice', async (req, res) => {
     }
 });
 
-// প্রি-চেকআউট হ্যান্ডলার
 bot.on('pre_checkout_query', async (query) => {
     try {
         await bot.answerPreCheckoutQuery(query.id, true);
@@ -286,7 +268,6 @@ bot.on('pre_checkout_query', async (query) => {
     }
 });
 
-// পেমেন্ট সফল হওয়ার পর পয়েন্ট এবং রেফারেল স্টার কমিশন যোগ করা
 bot.on('successful_payment', async (msg) => {
     try {
         const paymentInfo = msg.successful_payment;
@@ -317,7 +298,6 @@ bot.on('successful_payment', async (msg) => {
     }
 });
 
-// উইথড্র রিকোয়েস্ট API
 app.post('/api/withdraw', async (req, res) => {
     try {
         const { telegramId, method, account, amount } = req.body;
@@ -359,7 +339,6 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// টাস্ক লিস্ট আনা (টেলিগ্রাম বট অ্যাডমিন অটো-হাইড লজিকসহ)
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -376,11 +355,8 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
         let validTasks = [];
         for (let task of allTasks) {
             const owner = await User.findOne({ telegramId: task.ownerId });
-            
-            // মালিকের পর্যাপ্ত পয়েন্ট না থাকলে স্কিপ হবে
             if (!owner || owner.points < task.reward) continue;
 
-            // টেলিগ্রাম টাস্কের ক্ষেত্রে বট অ্যাডমিন আছে কি না চেক করে অটো-হাইড করার লজিক
             if (task.platform === 'telegram') {
                 try {
                     let chatIdentifier = task.link.trim();
@@ -392,12 +368,10 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
                     const chatMember = await bot.getChatMember(chatIdentifier, botInfo.id);
                     const adminStatuses = ['creator', 'administrator'];
 
-                    // বট অ্যাডমিন না থাকলে টাস্কটি হাইড থাকবে
                     if (!adminStatuses.includes(chatMember.status)) {
                         continue; 
                     }
                 } catch (botErr) {
-                    // কোনো এরর বা বট রিমুভ হয়ে গেলে টাস্ক অটো হাইড থাকবে
                     continue;
                 }
             }
@@ -411,7 +385,6 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
     }
 });
 
-// ইউজারের নিজের টাস্ক লিস্ট আনা
 app.get('/api/my-tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -422,7 +395,6 @@ app.get('/api/my-tasks/:telegramId', async (req, res) => {
     }
 });
 
-// টাস্ক ডিলিট করা API
 app.delete('/api/tasks/delete/:taskId', async (req, res) => {
     try {
         const { taskId } = req.params;
@@ -433,7 +405,6 @@ app.delete('/api/tasks/delete/:taskId', async (req, res) => {
     }
 });
 
-// টাস্ক স্কিপ করা API
 app.post('/api/tasks/skip', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -448,7 +419,6 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// টেলিগ্রাম টাস্ক অটো-ভেরিফিকেশন API (বট API দিয়ে মেম্বারশিপ চেক)
 app.post('/api/tasks/verify-telegram', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -500,7 +470,6 @@ app.post('/api/tasks/verify-telegram', async (req, res) => {
     }
 });
 
-// অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API (Gemini AI Vision + Multi-Platform Dynamic Prompt)
 app.post('/api/tasks/submit-proof', async (req, res) => {
     try {
         const { telegramId, taskId, proofUrl } = req.body;
@@ -521,7 +490,6 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
 
         const taskType = task.taskType || 'general action';
 
-        // নতুন এবং নিখুঁত মাল্টি-প্ল্যাটফর্ম এআই প্রম্পট
         const aiPrompt = `You are a strict and highly accurate AI Task Verification Expert. Your job is to verify user-submitted proof screenshots for micro-job platforms.
 
         TASK TYPE: "${taskType}"
@@ -611,7 +579,6 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
     }
 });
 
-// টাস্ক ক্রিয়েট করার API (টেলিগ্রাম সহ সব প্ল্যাটফর্ম এখন সরাসরি লাইভ হবে)
 app.post('/api/tasks/create', async (req, res) => {
     try {
         const { telegramId, platform, taskType, link, reward } = req.body;
@@ -636,7 +603,6 @@ app.post('/api/tasks/create', async (req, res) => {
     }
 });
 
-// অ্যাডমিন প্যানেল: পেন্ডিং টাস্ক কমপ্লিট প্রুফ লিস্ট
 app.get('/api/admin/pending-proofs', async (req, res) => {
     try {
         const proofs = await TaskSubmissionProof.find({ status: 'pending' }).populate('taskId');
@@ -646,7 +612,6 @@ app.get('/api/admin/pending-proofs', async (req, res) => {
     }
 });
 
-// অ্যাডমিন প্যানেল: টাস্ক কমপ্লিট প্রুফ রিভিউ (Approve/Reject) ও পয়েন্ট যোগ করা
 app.post('/api/admin/review-submission', async (req, res) => {
     try {
         const { submissionId, action } = req.body;
@@ -680,7 +645,6 @@ app.post('/api/admin/review-submission', async (req, res) => {
     }
 });
 
-// সরাসরি ইউজারকে ক্রেডিট পাঠানোর API
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { telegramId, targetUserId, targetTelegramId, amount } = req.body;
