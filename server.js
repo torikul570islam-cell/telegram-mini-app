@@ -1,4 +1,4 @@
-const express = require('express');
+[cite: 1]const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const TelegramBot = require('node-telegram-bot-api');
@@ -16,8 +16,8 @@ const BOT_TOKEN = "8801531798:AAEw7SJhnT1T8x69caPgMncjI6IPBAgWN3Q";
 // আপনার নির্দিষ্ট অ্যাডমিন টেলিগ্রাম আইডি
 const ADMIN_TELEGRAM_ID = "8351272061";
 
-// জেমিনি এআই ইনিশিয়ালাইজেশন
-const ai = new GoogleGenAI({ apiKey: 'AQ.Ab8RN6KKSyFdILfBaLUgaECW2_lX15q7O8D3P74SbSQYGxOGrg' });
+// জেমিনি এআই ইনিশিয়ালাইজেশন (রেন্ডার এনভায়রনমেন্ট ভেরিয়েবল থেকে কি রিড করবে)
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 // ইমেল কনফিগারেশন (নোডমেইলার)
 const transporter = nodemailer.createTransport({
