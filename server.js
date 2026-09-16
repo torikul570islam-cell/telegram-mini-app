@@ -62,23 +62,7 @@ const TaskSchema = new mongoose.Schema({
 });
 const Task = mongoose.model('Task', TaskSchema);
 
-// ১. টেলিগ্রাম টাস্ক ক্রিয়েট পেন্ডিং রিকোয়েস্ট স্কিমা (অ্যাডমিন প্রুফ স্ক্রিনশটসহ)
-const TaskCreationRequestSchema = new mongoose.Schema({
-    userId: String,
-    taskData: {
-        platform: { type: String, default: 'telegram' },
-        taskType: String,
-        link: String,
-        reward: Number,
-        targetChannelId: String
-    },
-    proofUrl: String, // স্ক্রিনশট ডাটা বা URL
-    status: { type: String, default: 'pending' }, // pending, approved, rejected
-    createdAt: { type: Date, default: Date.now }
-});
-const TaskCreationRequest = mongoose.model('TaskCreationRequest', TaskCreationRequestSchema);
-
-// ২. অন্যান্য প্ল্যাটফর্মের টাস্ক কমপ্লিট প্রুফ সাবমিশন স্কিমা
+// অন্যান্য প্ল্যাটফর্মের টাস্ক কমপ্লিট প্রুফ সাবমিশন স্কিমা
 const TaskSubmissionProofSchema = new mongoose.Schema({
     userId: String,
     taskId: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
@@ -464,7 +448,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     }
 });
 
-// ৩. টেলিগ্রাম টাস্ক অটো-ভেরিফিকেশন API (বট API দিয়ে মেম্বারশিপ চেক)
+// টেলিগ্রাম টাস্ক অটো-ভেরিফিকেশন API (বট API দিয়ে মেম্বারশিপ চেক)
 app.post('/api/tasks/verify-telegram', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -516,7 +500,7 @@ app.post('/api/tasks/verify-telegram', async (req, res) => {
     }
 });
 
-// ৪. অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API (Gemini AI Vision + 40% Threshold + Dynamic taskType)
+// অন্যান্য প্ল্যাটফর্মের টাস্ক প্রুফ সাবমিট করার API (Gemini AI Vision + 40% Threshold + Dynamic taskType)
 app.post('/api/tasks/submit-proof', async (req, res) => {
     try {
         const { telegramId, taskId, proofUrl } = req.body;
@@ -535,10 +519,8 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
             return res.status(400).json({ success: false, error: "Task already completed" });
         }
 
-        // টাস্কের ধরন ডাইনামিকালি পাস করা (যেমন: subscribe, like, join, follow ইত্যাদি)
         const taskType = task.taskType || 'general action';
 
-        // জেমিনি এআই ভিশন প্রম্পট
         const aiPrompt = `Analyze this screenshot to verify if the user has successfully completed the specific task type: "${taskType}". 
         Reply strictly in JSON format with two fields: 
         'confidence' (an integer from 0 to 100 representing your confidence percentage) and 
@@ -566,10 +548,9 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
             confidenceScore = aiResult.confidence || 0;
         } catch (aiErr) {
             console.error("AI Vision verification error:", aiErr);
-            confidenceScore = 0; // এআই ফেইল করলে কনফিডেন্স ০ ধরা হবে যাতে অ্যাডমিন রিভিউতে যায়
+            confidenceScore = 0; 
         }
 
-        // ৪০% থ্রেশহোল্ড রুল (>= 40% হলে অটো-এপ্রুভ, < 40% হলে অ্যাডমিন প্যানেলে যাবে)
         if (confidenceScore >= 40) {
             const taskOwner = await User.findOne({ telegramId: task.ownerId });
             if (!taskOwner || taskOwner.points < task.reward) {
@@ -593,7 +574,6 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
                 message: `Task auto-approved by AI! +${task.reward} points added.` 
             });
         } else {
-            // ৪০% এর নিচে হলে পেন্ডিং হিসেবে ডাটাবেজে সেভ হবে যেন অ্যাডমিন ম্যানুয়াল রিভিউ করতে পারে
             const newProof = new TaskSubmissionProof({
                 userId: telegramId,
                 taskId,
@@ -615,40 +595,7 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
     }
 });
 
-// ৫. টেলিগ্রাম টাস্ক ক্রিয়েট রিকোয়েস্ট (অ্যাডমিন প্রুফসহ) API
-app.post('/api/tasks/create-telegram-request', async (req, res) => {
-    try {
-        const { telegramId, taskType, link, reward, targetChannelId, proofUrl } = req.body;
-        
-        if (Number(reward) < 5) {
-            return res.status(400).json({ success: false, error: "Minimum reward must be at least 5 points!" });
-        }
-
-        if (!proofUrl || !targetChannelId) {
-            return res.status(400).json({ success: false, error: "Channel ID and Bot Admin proof screenshot are required!" });
-        }
-
-        const newReq = new TaskCreationRequest({
-            userId: telegramId,
-            taskData: {
-                platform: 'telegram',
-                taskType,
-                link,
-                reward: Number(reward),
-                targetChannelId
-            },
-            proofUrl,
-            status: 'pending'
-        });
-
-        await newReq.save();
-        res.json({ success: true, message: "Telegram task submitted for admin review! It will be live after admin approval." });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ৬. অন্যান্য সাধারণ টাস্ক ক্রিয়েট করার API (ইউটিউব/ফেসবুক ইত্যাদি)
+// টাস্ক ক্রিয়েট করার API (টেলিগ্রাম সহ সব প্ল্যাটফর্ম এখন সরাসরি লাইভ হবে)
 app.post('/api/tasks/create', async (req, res) => {
     try {
         const { telegramId, platform, taskType, link, reward } = req.body;
@@ -658,7 +605,7 @@ app.post('/api/tasks/create', async (req, res) => {
         }
 
         const newTask = new Task({
-            platform,
+            platform: platform || 'telegram',
             taskType,
             link,
             reward: Number(reward),
@@ -667,23 +614,13 @@ app.post('/api/tasks/create', async (req, res) => {
         });
 
         await newTask.save();
-        res.json({ success: true, message: "Task created successfully!" });
+        res.json({ success: true, message: "Task created and live successfully!" });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// ৭. অ্যাডমিন প্যানেল: পেন্ডিং টেলিগ্রাম টাস্ক ক্রিয়েট রিকোয়েস্ট লিস্ট
-app.get('/api/admin/pending-task-creations', async (req, res) => {
-    try {
-        const requests = await TaskCreationRequest.find({ status: 'pending' });
-        res.json({ success: true, requests });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ৮. অ্যাডমিন প্যানেল: পেন্ডিং টাস্ক কমপ্লিট প্রুফ লিস্ট
+// অ্যাডমিন প্যানেল: পেন্ডিং টাস্ক কমপ্লিট প্রুফ লিস্ট
 app.get('/api/admin/pending-proofs', async (req, res) => {
     try {
         const proofs = await TaskSubmissionProof.find({ status: 'pending' }).populate('taskId');
@@ -693,35 +630,7 @@ app.get('/api/admin/pending-proofs', async (req, res) => {
     }
 });
 
-// ৯. অ্যাডমিন প্যানেল: টেলিগ্রাম টাস্ক ক্রিয়েশন রিভিউ (Approve/Reject) ও ইমেজ অটো-ডিলিট
-app.post('/api/admin/review-task-creation', async (req, res) => {
-    try {
-        const { submissionId, action } = req.body;
-        const request = await TaskCreationRequest.findById(submissionId);
-        
-        if (!request) return res.status(404).json({ success: false, error: "Request not found" });
-
-        if (action === 'approve') {
-            const newTask = new Task({
-                platform: request.taskData.platform,
-                taskType: request.taskData.taskType,
-                link: request.taskData.link,
-                reward: request.taskData.reward,
-                ownerId: request.userId,
-                completedCount: 0
-            });
-            await newTask.save();
-        }
-
-        await TaskCreationRequest.findByIdAndDelete(submissionId);
-
-        res.json({ success: true, message: `Task creation request ${action}ed successfully!` });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// ১০. অ্যাডমিন প্যানেল: টাস্ক কমপ্লিট প্রুফ রিভিউ (Approve/Reject) ও পয়েন্ট যোগ করা এবং ইমেজ অটো-ডিলিট
+// অ্যাডমিন প্যানেল: টাস্ক কমপ্লিট প্রুফ রিভিউ (Approve/Reject) ও পয়েন্ট যোগ করা
 app.post('/api/admin/review-submission', async (req, res) => {
     try {
         const { submissionId, action } = req.body;
@@ -755,7 +664,7 @@ app.post('/api/admin/review-submission', async (req, res) => {
     }
 });
 
-// ১১. সরাসরি ইউজারকে ক্রেডিট পাঠানোর API
+// সরাসরি ইউজারকে ক্রেডিট পাঠানোর API
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { telegramId, targetUserId, targetTelegramId, amount } = req.body;
