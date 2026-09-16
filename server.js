@@ -490,59 +490,62 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
 
         const taskType = task.taskType || 'general action';
 
-        const aiPrompt = `You are a strict task verification AI. Look at the attached screenshot proof for the task type: "${taskType}".
-        
-        Does this screenshot clearly show that the user has completed the task (such as subscribed, liked, joined, or followed)?
-        
-        Reply strictly in valid JSON format ONLY, with no extra text or markdown:
+        const aiPrompt = `You are a strict and highly accurate AI Task Verification Expert. Your job is to verify user-submitted proof screenshots for micro-job platforms.
+
+        TASK TYPE: "${taskType}"
+
+        EVALUATION INSTRUCTIONS:
+        1. Analyze the uploaded screenshot with extreme care.
+        2. Check if the visual evidence matches the specific task type ("${taskType}"):
+           - If taskType involves "Telegram": Look for chat interface, channel join confirmation, or member status.
+           - If taskType involves "YouTube Subscribe": Look for the "Subscribed" button, checkmark, or bell icon on a channel page.
+           - If taskType involves "YouTube/Facebook/Instagram/TikTok Like": Look for a highlighted/filled like button, heart, or thumbs-up icon.
+           - If taskType involves "Followers": Look for a "Following" or "Friends" state on the profile page.
+        3. Be strict: If the screenshot is blurry, completely unrelated, shows a different app/page, or lacks proof, give a low confidence score (0-30). If it clearly matches, give a high confidence score (70-100).
+
+        RESPONSE FORMAT:
+        Reply strictly in valid JSON format ONLY, without any markdown formatting or extra text:
         {
-          "status": "APPROVED" or "REJECTED",
-          "reason": "Short explanation"
+          "confidence": <integer between 0 to 100>,
+          "reason": "<A short explanation of what is visible in the screenshot and why it passes or fails>"
         }`;
 
-        let isApproved = false;
+        let confidenceScore = 0;
         try {
             const response = await ai.models.generateContent({
                 model: 'gemini-2.0-flash',
                 contents: [
                     {
-                        inlineData: {
-                            data: proofUrl.replace(/^data:image\/\w+;base64,/, ""),
-                            mimeType: "image/jpeg"
-                        }
-                    },
-                    {
-                        text: aiPrompt
+                        role: 'user',
+                        parts: [
+                            {
+                                inlineData: {
+                                    data: proofUrl.replace(/^data:image\/\w+;base64,/, ""),
+                                    mimeType: "image/jpeg"
+                                }
+                            },
+                            {
+                                text: aiPrompt
+                            }
+                        ]
                     }
                 ]
             });
 
-            let rawText = "";
-            if (typeof response.text === 'function') {
-                rawText = response.text();
-            } else if (typeof response.text === 'string') {
-                rawText = response.text;
-            } else if (response.candidates && response.candidates[0]?.content?.parts?.[0]?.text) {
-                rawText = response.candidates[0].content.parts[0].text;
-            } else {
-                rawText = JSON.stringify(response);
-            }
-
-            const cleanText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
-            const jsonMatch = cleanText.match(/\{[\s\S]*\}/);
-            
+            const rawText = response.text || "";
+            const jsonMatch = rawText.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const aiResult = JSON.parse(jsonMatch[0]);
-                if (aiResult.status && aiResult.status.toUpperCase() === 'APPROVED') {
-                    isApproved = true;
-                }
+                confidenceScore = Number(aiResult.confidence) || 0;
+            } else {
+                confidenceScore = 0;
             }
         } catch (aiErr) {
             console.error("AI Vision verification error:", aiErr);
-            isApproved = false; 
+            confidenceScore = 0; 
         }
 
-        if (isApproved) {
+        if (confidenceScore >= 40) {
             const taskOwner = await User.findOne({ telegramId: task.ownerId });
             if (!taskOwner || taskOwner.points < task.reward) {
                 return res.status(400).json({ success: false, error: "Task owner has insufficient balance." });
@@ -561,6 +564,7 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
             return res.json({ 
                 success: true, 
                 autoApproved: true, 
+                confidence: confidenceScore,
                 message: `Task auto-approved by AI! +${task.reward} points added.` 
             });
         } else {
@@ -575,7 +579,8 @@ app.post('/api/tasks/submit-proof', async (req, res) => {
             return res.json({ 
                 success: true, 
                 autoApproved: false, 
-                message: "AI could not verify automatically. Sent to admin panel for manual review." 
+                confidence: confidenceScore,
+                message: "Confidence is below 40%. Sent to admin panel for manual review." 
             });
         }
 
