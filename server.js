@@ -80,6 +80,58 @@ function extractTelegramChannelUsername(link) {
     return null;
 }
 
+// ==========================================
+// টেলিগ্রাম বট /start কমান্ড এবং রেফারেল হ্যান্ডলার
+// ==========================================
+bot.onText(/\/start(?: (.+))?/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const telegramId = chatId.toString();
+    const referrerArg = match[1] ? match[1].trim() : null;
+
+    try {
+        let user = await User.findOne({ telegramId });
+
+        if (!user) {
+            let validReferrer = null;
+            if (referrerArg && referrerArg !== telegramId) {
+                const referrerUser = await User.findOne({ telegramId: referrerArg });
+                if (referrerUser) {
+                    validReferrer = referrerArg;
+                    referrerUser.referralCount += 1;
+                    referrerUser.points += 50; 
+                    await referrerUser.save();
+
+                    await bot.sendMessage(referrerUser.telegramId, `🎉 Your friend joined via your referral link! You earned 50 bonus points.`);
+                }
+            }
+
+            user = new User({
+                telegramId,
+                points: 50,
+                isAdmin: (telegramId === ADMIN_TELEGRAM_ID),
+                referredBy: validReferrer
+            });
+            await user.save();
+        } else {
+            if (telegramId === ADMIN_TELEGRAM_ID && !user.isAdmin) {
+                user.isAdmin = true;
+                await user.save();
+            }
+        }
+
+        const webAppUrl = "https://telegram-mini-app-8y39.onrender.com"; // আপনার ফ্রন্টএন্ড লিংক
+        await bot.sendMessage(chatId, `🔥 Welcome to Like4Like Bot!\n\nEarn points by completing tasks or invite friends to get bonuses.`, {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: "🚀 Open Mini App", web_app: { url: webAppUrl } }]
+                ]
+            }
+        });
+    } catch (err) {
+        console.error("Referral Error:", err);
+    }
+});
+
 // ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডেল করার API
 app.post('/api/register', async (req, res) => {
     try {
@@ -184,7 +236,7 @@ app.post('/api/website-login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// পাসওয়ার্ড ভুলে গেলে রিকভার করার API (ফিক্সড: identifier, telegramId, email ফিল্ড সঠিকভাবে ধরা হয়েছে)
+// পাসওয়ার্ড ভুলে গেলে রিকভার করার API
 app.post('/api/forgot-password', async (req, res) => {
     try {
         const { identifier, telegramId, email } = req.body;
@@ -242,11 +294,11 @@ app.post('/api/create-invoice', async (req, res) => {
         let title = "", description = "", amount = 0, points = 0;
 
         if (packageType === 'small') {
-            title = "100 Points"; description = "Get 100 points for Like4Like tasks"; amount = 5; points = 100;
+            title = "100 Points"; description = "Get 100 points for Like4Like tasks"; amount = 10; points = 100;
         } else if (packageType === 'medium') {
-            title = "500 Points"; description = "Get 500 points for Like4Like tasks"; amount = 20; points = 500;
+            title = "500 Points"; description = "Get 500 points for Like4Like tasks"; amount = 40; points = 500;
         } else if (packageType === 'large') {
-            title = "1200 Points"; description = "Get 1200 points for Like4Like tasks"; amount = 40; points = 1200;
+            title = "1200 Points"; description = "Get 1200 points for Like4Like tasks"; amount = 99; points = 1200;
         } else {
             return res.status(400).json({ success: false, error: "Invalid package type" });
         }
@@ -513,7 +565,7 @@ app.post('/api/admin/manage-user', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানো (ফিক্সড: অ্যাডমিন সিকিউরিটি ও আইডি হ্যান্ডেলিং)
+// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানো
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { telegramId, targetUserId, targetTelegramId, amount } = req.body;
