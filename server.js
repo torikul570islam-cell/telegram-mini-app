@@ -460,8 +460,8 @@ app.post('/api/tasks/complete', async (req, res) => {
             return res.status(400).json({ success: false, error: "Please click the task link first!" });
         }
         const timeDiffSeconds = (new Date() - new Date(clickTime)) / 1000;
-        if (timeDiffSeconds < 5) {
-            return res.status(400).json({ success: false, error: "You confirmed too fast! Spend at least 5 seconds." });
+        if (timeDiffSeconds < 6) {
+            return res.status(400).json({ success: false, error: "make sure tast is complete!." });
         }
 
         if (task.platform.toLowerCase() === 'telegram') {
