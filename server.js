@@ -184,11 +184,11 @@ app.post('/api/website-login', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// পাসওয়ার্ড ভুলে গেলে রিকভার করার API (Gmail এবং Telegram উভয় মাধ্যমেই পাঠানো হবে)
+// পাসওয়ার্ড ভুলে গেলে রিকভার করার API (ফিক্সড: identifier, telegramId, email ফিল্ড সঠিকভাবে ধরা হয়েছে)
 app.post('/api/forgot-password', async (req, res) => {
     try {
-        const { identifier, telegramId } = req.body;
-        const targetId = identifier || telegramId;
+        const { identifier, telegramId, email } = req.body;
+        const targetId = identifier || telegramId || email;
         if (!targetId) return res.status(400).json({ success: false, error: "Telegram ID or Gmail is required" });
 
         let user = await User.findOne({ $or: [{ telegramId: targetId }, { email: targetId }] });
@@ -315,7 +315,7 @@ app.post('/api/withdraw', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// টাস্ক লিস্ট আনা (বট অ্যাডমিন ও ওনার ব্যালেন্স চেক করে অটো হাইড ফিচার)
+// টাস্ক লিস্ট আনা
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -374,7 +374,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// লিংকে ক্লিক রেকর্ড করার API (৫ সেকেন্ড টাইমারের জন্য জরুরি)
+// লিংকে ক্লিক রেকর্ড করার API
 app.post('/api/tasks/click', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -389,7 +389,7 @@ app.post('/api/tasks/click', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// টাস্ক কমপ্লিট করার API (৫ সেকেন্ড টাইমার + টেলিগ্রাম মেম্বারশিপ API চেক + completedCount বৃদ্ধি)
+// টাস্ক কমপ্লিট করার API
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -403,7 +403,6 @@ app.post('/api/tasks/complete', async (req, res) => {
             return res.status(400).json({ success: false, error: "Task already completed" });
         }
 
-        // ৫ সেকেন্ড সময় পার হয়েছে কিনা চেক
         const clickTime = task.clickTimes && task.clickTimes.get(telegramId);
         if (!clickTime) {
             return res.status(400).json({ success: false, error: "Please click the task link first!" });
@@ -413,7 +412,6 @@ app.post('/api/tasks/complete', async (req, res) => {
             return res.status(400).json({ success: false, error: "You confirmed too fast! Spend at least 5 seconds." });
         }
 
-        // টেলিগ্রাম চ্যানেল ভেরিফিকেশন API চেক
         if (task.platform.toLowerCase() === 'telegram') {
             const channelUsername = extractTelegramChannelUsername(task.link);
             if (channelUsername) {
@@ -463,7 +461,7 @@ app.post('/api/tasks/report', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// টাস্ক ক্রিয়েট করার API (বট অ্যাডমিন চেকসহ)
+// টাস্ক ক্রিয়েট করার API
 app.post('/api/tasks/create', async (req, res) => {
     try {
         const { telegramId, platform, taskType, link, reward } = req.body;
@@ -499,7 +497,7 @@ app.get('/api/admin/reported-users', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// অ্যাডমিন প্যানেল: ইউজার ম্যানেজমেন্ট (ব্যান, আনবান, ক্লিয়ার রিপোর্ট)
+// অ্যাডমিন প্যানেল: ইউজার ম্যানেজমেন্ট
 app.post('/api/admin/manage-user', async (req, res) => {
     try {
         const { telegramId, action } = req.body;
@@ -515,7 +513,7 @@ app.post('/api/admin/manage-user', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানো
+// এডমিন প্যানেল: সরাসরি ইউজারকে ক্রেডিট পাঠানো (ফিক্সড: অ্যাডমিন সিকিউরিটি ও আইডি হ্যান্ডেলিং)
 app.post('/api/admin/give-credit', async (req, res) => {
     try {
         const { telegramId, targetUserId, targetTelegramId, amount } = req.body;
