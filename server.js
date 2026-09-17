@@ -13,7 +13,7 @@ const MONGO_URI = "mongodb+srv://torikul570:Nadira1432@cluster0.m5iatns.mongodb.
 const BOT_TOKEN = "8801531798:AAEw7SJhnT1T8x69caPgMncjI6IPBAgWN3Q";
 const ADMIN_TELEGRAM_ID = "8351272061";
 
-// জেমিনি এআই ইনিশিয়ালাইজেশন
+// জেমینس এআই ইনিশিয়ালাইজেশন
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const transporter = nodemailer.createTransport({
@@ -40,9 +40,19 @@ const UserSchema = new mongoose.Schema({
     password: { type: String, default: "" },
     lastDailyBonus: { type: Date, default: null },
     referredBy: { type: String, default: null },
-    referralCount: { type: Number, default: 0 }
+    referralCount: { type: Number, default: 0 },
+    reportCount: { type: Number, default: 0 } // মোট কয়টি রিপোর্ট খেলো তা ট্র্যাক করার জন্য
 });
 const User = mongoose.model('User', UserSchema);
+
+// ইউজারের বিরুদ্ধে আসা বিভিন্ন রিপোর্টের বিস্তারিত জমা রাখার স্কিমা
+const UserReportSchema = new mongoose.Schema({
+    targetTelegramId: { type: String, required: true },
+    reportedBy: { type: String, required: true }, // কে রিপোর্ট করলো
+    reason: { type: String, required: true },     // কি ধরনের রিপোর্ট (যেমন: task puro na koira credit netase)
+    createdAt: { type: Date, default: Date.now }
+});
+const UserReport = mongoose.model('UserReport', UserReportSchema);
 
 const TaskSchema = new mongoose.Schema({
     platform: String,
@@ -214,6 +224,61 @@ app.post('/api/daily-bonus', async (req, res) => {
         res.json({ success: true, newBalance: user.points });
     } catch (err) {
         res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// নতুন যুক্ত করা হয়েছে: ইউজারকে রিপোর্ট করার অপশন (১০ বার বা তার বেশি হলে এডমিন প্যানেলে শো করবে)
+app.post('/api/user/report', async (req, res) => {
+    try {
+        const { targetTelegramId, reportedBy, reason } = req.body;
+        if (!targetTelegramId || !reportedBy || !reason) {
+            return res.status(400).json({ success: false, error: "Target Telegram ID, Reporter ID, and Reason are required!" });
+        }
+
+        let targetUser = await User.findOne({ telegramId: targetTelegramId });
+        if (!targetUser) {
+            return res.status(404).json({ success: false, error: "Target user not found!" });
+        }
+
+        // ইউজারের রিপোর্ট কাউন্ট ১ বৃদ্ধি করা হলো
+        targetUser.reportCount = (targetUser.reportCount || 0) + 1;
+        await targetUser.save();
+
+        // রিপোর্টের বিস্তারিত ডাটাবেজে সংরক্ষণ করা হলো
+        const newReport = new UserReport({
+            targetTelegramId,
+            reportedBy,
+            reason
+        });
+        await newReport.save();
+
+        res.json({ success: true, message: "Report submitted successfully!", reportCount: targetUser.reportCount });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// নতুন যুক্ত করা হয়েছে: এডমিন প্যানেলের জন্য যে সকল ইউজারের রিপোর্ট সংখ্যা ১০ বা তার বেশি হয়েছে তাদের তালিকা এবং কি ধরনের রিপোর্ট খেয়েছে তা দেখা
+app.get('/api/admin/reports', async (req, res) => {
+    try {
+        // যে সকল ইউজারের reportCount >= 10 তাদের খুঁজে বের করা
+        const flaggedUsers = await User.find({ reportCount: { $gte: 10 } }).select('telegramId points reportCount');
+
+        let reportData = [];
+        for (let user of flaggedUsers) {
+            // উক্ত ইউজারের বিরুদ্ধে করা সব রিপোর্ট বা নির্দিষ্ট কারণগুলো নিয়ে আসা
+            const reports = await UserReport.find({ targetTelegramId: user.telegramId });
+            reportData.push({
+                telegramId: user.telegramId,
+                points: user.points,
+                totalReports: user.reportCount,
+                reportsDetails: reports
+            });
+        }
+
+        res.json({ success: true, flaggedUsers: reportData });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
