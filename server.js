@@ -119,7 +119,7 @@ bot.onText(/\/start(?: (.+))?/, async (msg, match) => {
             }
         }
 
-        const webAppUrl = "https://telegram-mini-app-8y39.onrender.com"; // আপনার ফ্রন্টএন্ড লিংক
+        const webAppUrl = "https://like4like-frontend.netlify.app/"; // আপনার ফ্রন্টএন্ড লিংক
         await bot.sendMessage(chatId, `🔥 Welcome to Like4Like Bot!\n\nEarn points by completing tasks or invite friends to get bonuses.`, {
             reply_markup: {
                 inline_keyboard: [
