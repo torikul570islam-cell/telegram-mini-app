@@ -32,7 +32,7 @@ mongoose.connect(MONGO_URI)
   .then(() => console.log("MongoDB Connected"))
   .catch(err => console.log(err));
 
-// ইউজার স্কিমা
+// ইউজার স্কিমা (সব ফিল্ড সহ)
 const UserSchema = new mongoose.Schema({
     telegramId: { type: String, unique: true },
     email: { type: String, default: "" },
@@ -52,9 +52,9 @@ const User = mongoose.model('User', UserSchema);
 
 // টাস্ক স্কিমা
 const TaskSchema = new mongoose.Schema({
-    platform: String,     // যেমন: telegram, youtube ইত্যাদি
-    taskType: String,     // যেমন: join, subscribe ইত্যাদি
-    link: String,         // চ্যানেল লিংক বা ইউজারনেম (যেমন: @mychannel বা https://t.me/mychannel)
+    platform: String,     
+    taskType: String,     
+    link: String,         
     reward: { type: Number, default: 10 },
     ownerId: String,
     completedCount: { type: Number, default: 0 },
@@ -73,7 +73,6 @@ function extractTelegramChannelUsername(link) {
     if (cleanLink.startsWith('@')) {
         return cleanLink;
     }
-    // যদি https://t.me/username হয়
     const match = cleanLink.match(/t\.me\/([a-zA-Z0-9_]+)/);
     if (match && match[1]) {
         return '@' + match[1];
@@ -81,7 +80,7 @@ function extractTelegramChannelUsername(link) {
     return null;
 }
 
-// ইউজার রেজিস্ট্রেশন API
+// ইউজার রেজিস্ট্রেশন ও রেফারেল হ্যান্ডেল করার API
 app.post('/api/register', async (req, res) => {
     try {
         const { telegramId, email, referredBy } = req.body;
@@ -110,8 +109,10 @@ app.post('/api/register', async (req, res) => {
             await user.save();
         } else {
             if (email && !user.email) user.email = email;
-            if (telegramId === ADMIN_TELEGRAM_ID && !user.isAdmin) user.isAdmin = true;
-            await user.save();
+            if (telegramId === ADMIN_TELEGRAM_ID && !user.isAdmin) {
+                user.isAdmin = true;
+                await user.save();
+            }
         }
         res.json({ success: true, user });
     } catch (err) {
@@ -119,7 +120,7 @@ app.post('/api/register', async (req, res) => {
     }
 });
 
-// ইউজার প্রোফাইল আনা
+// ইউজার প্রোফাইল ও ডাটা আনা
 app.get('/api/user/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -142,7 +143,7 @@ app.get('/api/user/:telegramId', async (req, res) => {
     }
 });
 
-// পাসওয়ার্ড সেট ও পরিবর্তন API
+// পাসওয়ার্ড সেট করার API
 app.post('/api/set-password', async (req, res) => {
     try {
         const { telegramId, password } = req.body;
@@ -151,6 +152,7 @@ app.post('/api/set-password', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// পাসওয়ার্ড পরিবর্তনের API
 app.post('/api/change-password', async (req, res) => {
     try {
         const { telegramId, oldPassword, newPassword } = req.body;
@@ -165,26 +167,31 @@ app.post('/api/change-password', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ওয়েবসাইট থেকে লগইন
+// ওয়েবসাইট থেকে লগইন করার API (Telegram ID অথবা Gmail দিয়ে লগইন)
 app.post('/api/website-login', async (req, res) => {
     try {
-        const { identifier, password } = req.body;
+        const { identifier, password, telegramId } = req.body;
+        const loginId = identifier || telegramId;
+
         const user = await User.findOne({ 
-            $or: [{ telegramId: identifier }, { email: identifier }],
+            $or: [{ telegramId: loginId }, { email: loginId }],
             password: password 
         });
         if (!user) return res.status(400).json({ success: false, error: "Invalid ID/Gmail or Password" });
         if (user.isBanned) return res.status(403).json({ success: false, error: "This account is banned!" });
+
         res.json({ success: true, message: "Login successful", user });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// পাসওয়ার্ড ভুলে গেলে রিকভার
+// পাসওয়ার্ড ভুলে গেলে রিকভার করার API (Gmail এবং Telegram উভয় মাধ্যমেই পাঠানো হবে)
 app.post('/api/forgot-password', async (req, res) => {
     try {
-        const { identifier } = req.body;
-        if (!identifier) return res.status(400).json({ success: false, error: "Telegram ID or Gmail is required" });
-        let user = await User.findOne({ $or: [{ telegramId: identifier }, { email: identifier }] });
+        const { identifier, telegramId } = req.body;
+        const targetId = identifier || telegramId;
+        if (!targetId) return res.status(400).json({ success: false, error: "Telegram ID or Gmail is required" });
+
+        let user = await User.findOne({ $or: [{ telegramId: targetId }, { email: targetId }] });
         if (!user) return res.status(404).json({ success: false, error: "User not found" });
 
         const tempPassword = Math.random().toString(36).slice(-8);
@@ -206,7 +213,7 @@ app.post('/api/forgot-password', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ডেইলি বোনাস
+// ডেইলি বোনাস API (প্রতি ২৪ ঘণ্টায় ৫ পয়েন্ট)
 app.post('/api/daily-bonus', async (req, res) => {
     try {
         const { telegramId } = req.body;
@@ -228,7 +235,87 @@ app.post('/api/daily-bonus', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// টাস্ক লিস্ট আনা এবং বট অ্যাডমিন ও ওনার ব্যালেন্স চেক (অটো হাইড ফিচার)
+// টেলিগ্রাম স্টার ইনভয়েস API
+app.post('/api/create-invoice', async (req, res) => {
+    try {
+        const { telegramId, packageType } = req.body;
+        let title = "", description = "", amount = 0, points = 0;
+
+        if (packageType === 'small') {
+            title = "100 Points"; description = "Get 100 points for Like4Like tasks"; amount = 5; points = 100;
+        } else if (packageType === 'medium') {
+            title = "500 Points"; description = "Get 500 points for Like4Like tasks"; amount = 20; points = 500;
+        } else if (packageType === 'large') {
+            title = "1200 Points"; description = "Get 1200 points for Like4Like tasks"; amount = 40; points = 1200;
+        } else {
+            return res.status(400).json({ success: false, error: "Invalid package type" });
+        }
+
+        const invoiceLink = await bot.createInvoiceLink(
+            title, description, JSON.stringify({ telegramId, points, amount }), "", "XTR", [{ label: title, amount: amount }]
+        );
+        res.json({ success: true, invoiceLink });
+    } catch (err) { res.status(500).json({ success: false, error: err.message }); }
+});
+
+bot.on('pre_checkout_query', async (query) => {
+    try { await bot.answerPreCheckoutQuery(query.id, true); } catch (e) { console.error(e); }
+});
+
+bot.on('successful_payment', async (msg) => {
+    try {
+        const payload = JSON.parse(msg.successful_payment.invoice_payload);
+        const { telegramId, points, amount } = payload;
+        let user = await User.findOne({ telegramId });
+        if (user) {
+            user.points += points;
+            await user.save();
+
+            if (user.referredBy) {
+                let referrer = await User.findOne({ telegramId: user.referredBy });
+                if (referrer) {
+                    let commissionStars = Math.floor(amount * 0.30);
+                    if (commissionStars > 0) {
+                        referrer.stars += commissionStars;
+                        await referrer.save();
+                        await bot.sendMessage(referrer.telegramId, `🎉 You received ${commissionStars} Stars commission from your referral's purchase!`);
+                    }
+                }
+            }
+            await bot.sendMessage(telegramId, `✅ Payment successful! ${points} points added.`);
+        }
+    } catch (err) { console.error(err); }
+});
+
+// উইথড্র রিকোয়েস্ট API
+app.post('/api/withdraw', async (req, res) => {
+    try {
+        const { telegramId, method, account, amount } = req.body;
+        let user = await User.findOne({ telegramId });
+        if (!user) return res.status(404).json({ success: false, error: "User not found" });
+
+        if (Number(amount) < 500) {
+            return res.status(400).json({ success: false, error: "Minimum withdrawal amount is 500 Stars!" });
+        }
+        if (user.stars < Number(amount)) {
+            return res.status(400).json({ success: false, error: "Insufficient Star balance!" });
+        }
+
+        user.stars -= Number(amount);
+        await user.save();
+
+        transporter.sendMail({
+            from: 'torikul570islam@gmail.com',
+            to: 'torikul570islam@gmail.com',
+            subject: 'New Star Withdrawal Request!',
+            text: `Telegram ID: ${telegramId}\nMethod: ${method}\nAccount: ${account}\nAmount: ${amount} Stars`
+        });
+
+        res.json({ success: true, message: "Withdrawal request submitted successfully!" });
+    } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// টাস্ক লিস্ট আনা (বট অ্যাডমিন ও ওনার ব্যালেন্স চেক করে অটো হাইড ফিচার)
 app.get('/api/tasks/:telegramId', async (req, res) => {
     try {
         const { telegramId } = req.params;
@@ -241,25 +328,17 @@ app.get('/api/tasks/:telegramId', async (req, res) => {
         let validTasks = [];
         for (let task of allTasks) {
             const owner = await User.findOne({ telegramId: task.ownerId });
-            if (!owner || owner.points < task.reward) continue; // ওনারের পর্যাপ্ত পয়েন্ট না থাকলে স্কিপ
+            if (!owner || owner.points < task.reward) continue;
 
-            // যদি প্ল্যাটফর্ম টেলিগ্রাম হয়, চেক করবো বট চ্যানেলে অ্যাডমিন আছে কিনা
             if (task.platform.toLowerCase() === 'telegram') {
                 const channelUsername = extractTelegramChannelUsername(task.link);
                 if (channelUsername) {
                     try {
                         const botMember = await bot.getChatMember(channelUsername, (await bot.getMe()).id);
-                        // যদি বট অ্যাডমিন বা ক্রিয়েটর না হয়, তবে টাস্ক হাইড থাকবে
-                        if (!['administrator', 'creator'].includes(botMember.status)) {
-                            continue; 
-                        }
-                    } catch (e) {
-                        // বট চ্যানেলে যুক্ত না থাকলে বা চ্যাট না পেলে টাস্ক দেখাবে না
-                        continue;
-                    }
+                        if (!['administrator', 'creator'].includes(botMember.status)) continue;
+                    } catch (e) { continue; }
                 }
             }
-
             validTasks.push(task);
         }
         res.json(validTasks.slice(0, 2));
@@ -295,7 +374,7 @@ app.post('/api/tasks/skip', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// লিংকে ক্লিক করার সময় রেকর্ড করা
+// লিংকে ক্লিক রেকর্ড করার API (৫ সেকেন্ড টাইমারের জন্য জরুরি)
 app.post('/api/tasks/click', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -310,7 +389,7 @@ app.post('/api/tasks/click', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// টাস্ক কমপ্লিট করার API (৫ সেকেন্ড চেক + টেলিগ্রাম চ্যানেল মেম্বারশিপ API চেক)
+// টাস্ক কমপ্লিট করার API (৫ সেকেন্ড টাইমার + টেলিগ্রাম মেম্বারশিপ API চেক + completedCount বৃদ্ধি)
 app.post('/api/tasks/complete', async (req, res) => {
     try {
         const { telegramId, taskId } = req.body;
@@ -329,33 +408,22 @@ app.post('/api/tasks/complete', async (req, res) => {
         if (!clickTime) {
             return res.status(400).json({ success: false, error: "Please click the task link first!" });
         }
-
         const timeDiffSeconds = (new Date() - new Date(clickTime)) / 1000;
         if (timeDiffSeconds < 5) {
-            return res.status(400).json({ 
-                success: false, 
-                error: "You confirmed too fast! You must spend at least 5 seconds. Task expired for you." 
-            });
+            return res.status(400).json({ success: false, error: "You confirmed too fast! Spend at least 5 seconds." });
         }
 
-        // যদি টেলিগ্রাম টাস্ক হয়, তবে টেলিগ্রাম API দিয়ে চেক করবো ইউজার চ্যানেলে জয়েন করেছে কিনা
+        // টেলিগ্রাম চ্যানেল ভেরিফিকেশন API চেক
         if (task.platform.toLowerCase() === 'telegram') {
             const channelUsername = extractTelegramChannelUsername(task.link);
             if (channelUsername) {
                 try {
                     const member = await bot.getChatMember(channelUsername, telegramId);
-                    const validStatuses = ['member', 'administrator', 'creator'];
-                    if (!validStatuses.includes(member.status)) {
-                        return res.status(400).json({ 
-                            success: false, 
-                            error: "Verification failed! You have not joined the channel yet." 
-                        });
+                    if (!['member', 'administrator', 'creator'].includes(member.status)) {
+                        return res.status(400).json({ success: false, error: "Verification failed! You haven't joined the channel yet." });
                     }
                 } catch (err) {
-                    return res.status(400).json({ 
-                        success: false, 
-                        error: "Could not verify your membership. Make sure you joined the channel." 
-                    });
+                    return res.status(400).json({ success: false, error: "Could not verify membership. Make sure you joined." });
                 }
             }
         }
@@ -377,51 +445,40 @@ app.post('/api/tasks/complete', async (req, res) => {
         await task.save();
 
         res.json({ success: true, points: user.points });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // টাস্ক রিপোর্ট করার API
 app.post('/api/tasks/report', async (req, res) => {
     try {
-        const { taskId, reportedTelegramId } = req.body;
+        const { reportedTelegramId } = req.body;
         const targetUser = await User.findOne({ telegramId: reportedTelegramId });
         if (!targetUser) return res.status(404).json({ success: false, error: "User not found" });
 
         targetUser.reportCount = (targetUser.reportCount || 0) + 1;
-        if (targetUser.reportCount >= 10) {
-            targetUser.isBanned = true;
-        }
+        if (targetUser.reportCount >= 10) targetUser.isBanned = true;
         await targetUser.save();
 
         res.json({ success: true, message: "User reported successfully!" });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// টাস্ক ক্রিয়েট করার API (বট চ্যানেলে অ্যাডমিন আছে কিনা চেক করে টাস্ক তৈরি করবে)
+// টাস্ক ক্রিয়েট করার API (বট অ্যাডমিন চেকসহ)
 app.post('/api/tasks/create', async (req, res) => {
     try {
         const { telegramId, platform, taskType, link, reward } = req.body;
         if (Number(reward) < 5) return res.status(400).json({ success: false, error: "Minimum reward is 5 points!" });
 
-        // যদি টেলিগ্রাম টাস্ক হয়, চেক করবো বট চ্যানেলের অ্যাডমিন কিনা
         if (platform && platform.toLowerCase() === 'telegram') {
             const channelUsername = extractTelegramChannelUsername(link);
             if (channelUsername) {
                 try {
                     const botMember = await bot.getChatMember(channelUsername, (await bot.getMe()).id);
                     if (!['administrator', 'creator'].includes(botMember.status)) {
-                        return res.status(400).json({ 
-                            success: false, 
-                            error: "Bot is not an admin in your Telegram channel! Please add the bot as an admin first." 
-                        });
+                        return res.status(400).json({ success: false, error: "Bot is not an admin in your Telegram channel!" });
                     }
                 } catch (e) {
-                    return res.status(400).json({ 
-                        success: false, 
-                        error: "Unable to verify bot as admin. Check the channel username/link and ensure the bot is added as admin." 
-                    });
+                    return res.status(400).json({ success: false, error: "Unable to verify bot as admin in the channel." });
                 }
             }
         }
@@ -429,7 +486,6 @@ app.post('/api/tasks/create', async (req, res) => {
         const newTask = new Task({
             platform, taskType, link, reward: Number(reward), ownerId: telegramId, completedCount: 0
         });
-
         await newTask.save();
         res.json({ success: true, message: "Task created successfully!" });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -443,25 +499,19 @@ app.get('/api/admin/reported-users', async (req, res) => {
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// অ্যাডমিন প্যানেল: ইউজার ম্যানেজমেন্ট (রিসেট রিপোর্ট, ব্যান, আনবান)
+// অ্যাডমিন প্যানেল: ইউজার ম্যানেজমেন্ট (ব্যান, আনবান, ক্লিয়ার রিপোর্ট)
 app.post('/api/admin/manage-user', async (req, res) => {
     try {
-        const { telegramId, action } = req.body; 
+        const { telegramId, action } = req.body;
         let user = await User.findOne({ telegramId });
         if (!user) return res.status(404).json({ success: false, error: "User not found" });
 
-        if (action === 'clear_reports') {
-            user.reportCount = 0;
-            user.isBanned = false;
-        } else if (action === 'ban') {
-            user.isBanned = true;
-        } else if (action === 'unban') {
-            user.isBanned = false;
-            user.reportCount = 0;
-        }
+        if (action === 'clear_reports') { user.reportCount = 0; user.isBanned = false; }
+        else if (action === 'ban') { user.isBanned = true; }
+        else if (action === 'unban') { user.isBanned = false; user.reportCount = 0; }
 
         await user.save();
-        res.json({ success: true, message: `Action ${action} executed successfully!` });
+        res.json({ success: true, message: `Action ${action} executed!` });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -473,6 +523,13 @@ app.post('/api/admin/give-credit', async (req, res) => {
         
         if (!recipientId || !amount) {
             return res.status(400).json({ success: false, error: "Target User ID and Amount are required!" });
+        }
+
+        if (telegramId && telegramId !== ADMIN_TELEGRAM_ID) {
+            const adminCheck = await User.findOne({ telegramId });
+            if (!adminCheck || !adminCheck.isAdmin) {
+                return res.status(403).json({ success: false, error: "Unauthorized! Admin access required." });
+            }
         }
 
         let targetUser = await User.findOne({ telegramId: recipientId });
